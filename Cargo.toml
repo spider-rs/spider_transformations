@@ -1,0 +1,42 @@
+[package]
+name = "spider_transformations"
+version = "2.37.108"
+authors = ["j-mendez <jeff@spider.cloud>"]
+readme = "README.md"
+description = "Transformation utils to use for spider"
+repository = "https://github.com/spider-rs/spider_transformations"
+homepage = "https://github.com/spider-rs/spider_transformations"
+keywords = ["crawler", "spider", "transformations"]
+categories = ["web-programming", "command-line-utilities"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+indexmap = { version = "1", optional = true }
+aho-corasick = "1"
+regex = "1"
+html5ever = "0.27"
+unicode-width = "0.2"
+markup5ever = "0.12"
+tendril = "0.4"
+llm_readability = "0"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+fast_html2md = { version = "0", features = ["stream", "rewriter"] }
+phf = "0.11"
+phf_codegen = "0.11"
+lol_html = { version = "2" }
+spider_scraper = "0.1"
+
+[dependencies.spider]
+version = "2"
+default-features = false
+
+[dev-dependencies]
+maud = "0.26"
+
+[features]
+default = ["serde"]
+indexset = ["indexmap"]
+serde = ["indexmap/serde", "spider/serde"]
+clippy = []
