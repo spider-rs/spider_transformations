@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.37.108"
+version = "2.37.109"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -27,6 +27,7 @@ phf = "0.11"
 phf_codegen = "0.11"
 lol_html = { version = "2" }
 spider_scraper = "0.1"
+base64 =  {version = "0.22", optional = true }
 
 [dependencies.spider]
 version = "2"
@@ -40,3 +41,4 @@ default = ["serde"]
 indexset = ["indexmap"]
 serde = ["indexmap/serde", "spider/serde"]
 clippy = []
+screenshot = [ "dep:base64", "spider/chrome", "spider/cookies", "spider/real_browser"]

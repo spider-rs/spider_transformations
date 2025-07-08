@@ -38,12 +38,16 @@ pub enum ReturnFormat {
     Text,
     /// Text Mapping
     Html2Text,
+    /// Screenshot - does nothing without the 'screenshot' flag.
+    Screenshot,
     /// Markdown
     Markdown,
     /// Commonmark
     CommonMark,
     /// XML
     XML,
+    /// Empty
+    Empty,
 }
 
 impl ReturnFormat {
@@ -59,6 +63,8 @@ impl ReturnFormat {
             "bytes" | "Bytes" | "BYTES" => ReturnFormat::Bytes,
             "commonmark" | "CommonMark" | "COMMONMARK" => ReturnFormat::CommonMark,
             "xml" | "XML" | "XmL" | "Xml" => ReturnFormat::XML,
+            "screenshot" | "screenshots" | "SCREENSHOT" | "SCREENSHOTS" | "Screenshot" | "Screenshots" => ReturnFormat::Screenshot,
+            "empty" | "Empty" | "EMPTY" => ReturnFormat::Empty,
             _ => ReturnFormat::Raw,
         }
     }
@@ -81,6 +87,8 @@ impl<'de> Deserialize<'de> for ReturnFormat {
             "bytes" | "Bytes" | "BYTES" => Ok(ReturnFormat::Bytes),
             "commonmark" | "CommonMark" | "COMMONMARK" => Ok(ReturnFormat::CommonMark),
             "xml" | "XML" | "XmL" | "Xml" => Ok(ReturnFormat::XML),
+            "empty" | "Empty" | "EMPTY" => Ok(ReturnFormat::Empty),
+            "screenshot" | "screenshots" | "SCREENSHOT" | "SCREENSHOTS" | "Screenshot" | "Screenshots"  => Ok(ReturnFormat::Screenshot),
             _ => Ok(ReturnFormat::Raw),
         }
     }
@@ -271,6 +279,22 @@ fn get_html(res: &Page, encoding: &Option<String>) -> String {
     }
 }
 
+/// get the screenshot as base64
+#[cfg(feature = "screenshot")]
+fn get_screenshot(res: &Page) -> String {
+    use base64::{engine::general_purpose, Engine as _};
+    match &res.screenshot_bytes {
+        Some(content) => general_purpose::URL_SAFE.encode(&content),
+        _ => Default::default(),
+    }
+}
+
+/// get the screenshot as base64
+#[cfg(not(feature = "screenshot"))]
+fn get_screenshot(_res: &Page) -> String {
+    Default::default()
+}
+
 /// get the html with the root selector
 fn get_html_with_selector(
     res: &Page,
@@ -380,6 +404,8 @@ pub fn transform_content(
     }
 
     match c.return_format {
+        ReturnFormat::Empty => Default::default(),
+        ReturnFormat::Screenshot => get_screenshot(&res),
         ReturnFormat::Raw | ReturnFormat::Bytes => base_html,
         ReturnFormat::CommonMark => {
             html2md::rewrite_html_custom_with_url(&base_html, &tag_factory, true, url_parsed)
@@ -471,6 +497,8 @@ pub async fn transform_content_send(
     }
 
     match c.return_format {
+        ReturnFormat::Empty => Default::default(),
+        ReturnFormat::Screenshot => get_screenshot(&res),
         ReturnFormat::Raw | ReturnFormat::Bytes => base_html,
         ReturnFormat::CommonMark => {
             html2md::rewrite_html_custom_with_url_streaming(
