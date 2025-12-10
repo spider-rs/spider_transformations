@@ -241,6 +241,7 @@ pub(crate) fn build_static_vector(config: &TransformConfig) -> Vec<&'static str>
 
     if config.main_content {
         tags.push("nav");
+        tags.push("header");
         tags.push("footer");
         tags.push("aside");
     }
