@@ -63,7 +63,8 @@ impl ReturnFormat {
             "bytes" | "Bytes" | "BYTES" => ReturnFormat::Bytes,
             "commonmark" | "CommonMark" | "COMMONMARK" => ReturnFormat::CommonMark,
             "xml" | "XML" | "XmL" | "Xml" => ReturnFormat::XML,
-            "screenshot" | "screenshots" | "SCREENSHOT" | "SCREENSHOTS" | "Screenshot" | "Screenshots" => ReturnFormat::Screenshot,
+            "screenshot" | "screenshots" | "SCREENSHOT" | "SCREENSHOTS" | "Screenshot"
+            | "Screenshots" => ReturnFormat::Screenshot,
             "empty" | "Empty" | "EMPTY" => ReturnFormat::Empty,
             _ => ReturnFormat::Raw,
         }
@@ -88,7 +89,8 @@ impl<'de> Deserialize<'de> for ReturnFormat {
             "commonmark" | "CommonMark" | "COMMONMARK" => Ok(ReturnFormat::CommonMark),
             "xml" | "XML" | "XmL" | "Xml" => Ok(ReturnFormat::XML),
             "empty" | "Empty" | "EMPTY" => Ok(ReturnFormat::Empty),
-            "screenshot" | "screenshots" | "SCREENSHOT" | "SCREENSHOTS" | "Screenshot" | "Screenshots"  => Ok(ReturnFormat::Screenshot),
+            "screenshot" | "screenshots" | "SCREENSHOT" | "SCREENSHOTS" | "Screenshot"
+            | "Screenshots" => Ok(ReturnFormat::Screenshot),
             _ => Ok(ReturnFormat::Raw),
         }
     }
@@ -118,6 +120,22 @@ pub struct SelectorConfiguration {
     pub root_selector: Option<String>,
     /// Exclude the matching css selector from the output.
     pub exclude_selector: Option<String>,
+}
+
+/// The transformation input.
+pub struct TransformInput<'a> {
+    /// Parsed URL (preferred). If you only have &str, parse once upstream and reuse.
+    pub url: Option<&'a url::Url>,
+    /// Raw response body bytes (used for binary detection + html decode).
+    pub content: &'a [u8],
+    /// Optional screenshot bytes (PNG/JPEG/etc). Only used when ReturnFormat::Screenshot.
+    pub screenshot_bytes: Option<&'a [u8]>,
+    /// Optional encoding hint (e.g. "utf-8"). Borrowed to avoid cloning.
+    pub encoding: Option<&'a str>,
+    /// Optional selector extraction config (borrowed).
+    pub selector_config: Option<&'a SelectorConfiguration>,
+    /// Optional ignore tags as borrowed &str slices (avoid Vec<String> clones).
+    pub ignore_tags: Option<&'a [&'a str]>,
 }
 
 /// is the content html and safe for formatting.
@@ -341,6 +359,69 @@ fn get_html_with_selector(
     html
 }
 
+/// get the html with the root selector
+#[inline]
+fn get_html_with_selector_bytes(
+    content: &[u8],
+    encoding: Option<&str>,
+    selector_config: Option<&SelectorConfiguration>,
+) -> String {
+    use scraper::{Html, Selector};
+
+    let html = match encoding {
+        Some(e) => auto_encoder::encode_bytes(content, e),
+        _ => auto_encoder::auto_encode_bytes(content),
+    };
+
+    // Fast path: no selector work
+    let Some(cfg) = selector_config else {
+        return html;
+    };
+
+    // If both selectors are None, avoid parse entirely
+    if cfg.root_selector.is_none() && cfg.exclude_selector.is_none() {
+        return html;
+    }
+
+    // Parse fragment once
+    let mut fragment = Html::parse_fragment(&html);
+
+    // Root selector handling
+    if let Some(selector) = cfg.root_selector.as_deref() {
+        if let Ok(parsed_selector) = Selector::parse(selector) {
+            if let Some(root_node) = fragment.select(&parsed_selector).next() {
+                if cfg.exclude_selector.is_some() {
+                    // We need to remove excluded nodes only inside the root,
+                    // so re-scope fragment to the selected root.
+                    // root_node.html() allocates (unavoidable).
+                    fragment = Html::parse_fragment(&root_node.html());
+                } else {
+                    // Return direct html from selected node (allocates; required)
+                    return root_node.html();
+                }
+            }
+        }
+    }
+
+    // Exclude selector handling (collect IDs then remove; cannot mutate while iterating)
+    if let Some(exclude_selector) = cfg.exclude_selector.as_deref() {
+        if let Ok(exclude_sel) = Selector::parse(exclude_selector) {
+            // Small optimization: avoid reallocs for common cases
+            let mut ids = Vec::with_capacity(32);
+
+            for elem in fragment.root_element().select(&exclude_sel) {
+                ids.push(elem.id());
+            }
+
+            for id in ids {
+                fragment.remove_node(id);
+            }
+        }
+    }
+
+    fragment.root_element().html()
+}
+
 /// Transform format the content.
 pub fn transform_content(
     res: &Page,
@@ -539,6 +620,246 @@ pub async fn transform_content_send(
         )
         .unwrap_or_default(),
     }
+}
+
+/// Transform content input send.
+pub async fn transform_content_send_from_url_and_bytes(
+    input: TransformInput<'_>,
+    c: &TransformConfig,
+) -> String {
+    use std::collections::HashSet;
+
+    let base_html =
+        get_html_with_selector_bytes(input.content, input.encoding, input.selector_config);
+
+    // prevent transforming binary files or re-encoding it
+    if is_binary_file(input.content) {
+        return base_html;
+    }
+
+    let base_html = {
+        let mut ignore_list = build_static_vector(c);
+
+        if let Some(ignore) = input.ignore_tags {
+            ignore_list.extend(ignore.iter().copied());
+        }
+
+        if ignore_list.is_empty() {
+            base_html
+        } else {
+            clean_html_elements(&base_html, ignore_list)
+        }
+    };
+
+    // process readability
+    let base_html = if c.readability {
+        match llm_readability::extractor::extract(
+            &mut base_html.as_bytes(),
+            input.url.unwrap_or(&EXAMPLE_URL),
+        ) {
+            Ok(product) => product.content,
+            Err(_) => base_html,
+        }
+    } else {
+        base_html
+    };
+
+    let base_html = if c.clean_html {
+        clean_html(&base_html)
+    } else {
+        base_html
+    };
+
+    // Build ignore set only if needed
+    let tag_factory: Option<HashSet<String>> = input.ignore_tags.map(|ignore| {
+        let mut set = HashSet::with_capacity(ignore.len());
+        for &t in ignore {
+            set.insert(t.to_string());
+        }
+        set
+    });
+
+    match c.return_format {
+        ReturnFormat::Empty => String::new(),
+
+        ReturnFormat::Screenshot => {
+            #[cfg(feature = "screenshot")]
+            {
+                screenshot_base64_urlsafe(input.screenshot_bytes)
+            }
+            #[cfg(not(feature = "screenshot"))]
+            {
+                String::new()
+            }
+        }
+
+        ReturnFormat::Raw | ReturnFormat::Bytes => base_html,
+
+        ReturnFormat::CommonMark => {
+            html2md::rewrite_html_custom_with_url_streaming(
+                &base_html,
+                &tag_factory,
+                true,
+                &input.url.cloned(),
+            )
+            .await
+        }
+
+        ReturnFormat::Markdown => {
+            html2md::rewrite_html_custom_with_url_streaming(
+                &base_html,
+                &tag_factory,
+                false,
+                &input.url.cloned(),
+            )
+            .await
+        }
+
+        ReturnFormat::Html2Text => {
+            if !base_html.is_empty() {
+                crate::html2text::from_read(base_html.as_bytes(), base_html.len())
+            } else {
+                base_html
+            }
+        }
+
+        ReturnFormat::Text => {
+            super::text_extract::extract_text_streaming(&base_html, &tag_factory).await
+        }
+
+        ReturnFormat::XML => convert_html_to_xml(
+            base_html.trim(),
+            &input
+                .url
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| EXAMPLE_URL.to_string()),
+            &input.encoding.map(|s| s.to_string()),
+        )
+        .unwrap_or_default(),
+    }
+}
+
+#[inline]
+/// Transform content input.
+pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -> String {
+    use std::collections::HashSet;
+
+    // Build base html from raw bytes using existing logic adapted to bytes.
+    let base_html =
+        get_html_with_selector_bytes(input.content, input.encoding, input.selector_config);
+
+    // prevent transforming binary files or re-encoding it
+    if is_binary_file(input.content) {
+        return base_html;
+    }
+
+    let base_html = {
+        let mut ignore_list = build_static_vector(c);
+
+        if let Some(ignore) = input.ignore_tags {
+            ignore_list.extend(ignore.iter().copied());
+        }
+
+        if ignore_list.is_empty() {
+            base_html
+        } else {
+            clean_html_elements(&base_html, ignore_list)
+        }
+    };
+
+    // process readability
+    let base_html = if c.readability {
+        match llm_readability::extractor::extract(
+            &mut base_html.as_bytes(),
+            input.url.unwrap_or(&EXAMPLE_URL),
+        ) {
+            Ok(product) => product.content,
+            Err(_) => base_html,
+        }
+    } else {
+        base_html
+    };
+
+    let base_html = if c.clean_html {
+        clean_html(&base_html)
+    } else {
+        base_html
+    };
+
+    // Build ignore tag set only if needed by downstream (md/text extract).
+    let tag_factory: Option<HashSet<String>> = input.ignore_tags.map(|ignore| {
+        let mut set = HashSet::with_capacity(ignore.len());
+        for &t in ignore {
+            set.insert(t.to_string());
+        }
+        set
+    });
+
+    match c.return_format {
+        ReturnFormat::Empty => String::new(),
+
+        ReturnFormat::Screenshot => {
+            #[cfg(feature = "screenshot")]
+            {
+                screenshot_base64_urlsafe(input.screenshot_bytes)
+            }
+            #[cfg(not(feature = "screenshot"))]
+            {
+                String::new()
+            }
+        }
+
+        ReturnFormat::Raw | ReturnFormat::Bytes => base_html,
+
+        ReturnFormat::CommonMark => html2md::rewrite_html_custom_with_url(
+            &base_html,
+            &tag_factory,
+            true,
+            &input.url.cloned(),
+        ),
+        ReturnFormat::Markdown => html2md::rewrite_html_custom_with_url(
+            &base_html,
+            &tag_factory,
+            false,
+            &input.url.cloned(),
+        ),
+
+        ReturnFormat::Html2Text => {
+            if !base_html.is_empty() {
+                crate::html2text::from_read(base_html.as_bytes(), base_html.len())
+            } else {
+                base_html
+            }
+        }
+
+        ReturnFormat::Text => super::text_extract::extract_text(&base_html, &tag_factory),
+
+        ReturnFormat::XML => convert_html_to_xml(
+            base_html.trim(),
+            &input
+                .url
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| EXAMPLE_URL.to_string()),
+            &input.encoding.map(|s| s.to_string()),
+        )
+        .unwrap_or_default(),
+    }
+}
+
+#[cfg(feature = "screenshot")]
+#[inline]
+fn screenshot_base64_urlsafe(screenshot_bytes: Option<&[u8]>) -> String {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let Some(bytes) = screenshot_bytes else {
+        return String::new();
+    };
+
+    // Single allocation: reserve exact output length.
+    let cap = base64::encoded_len(bytes.len(), true).unwrap_or(0);
+    let mut out = String::with_capacity(cap);
+    general_purpose::URL_SAFE.encode_string(bytes, &mut out);
+    out
 }
 
 /// transform the content to bytes to prevent loss of precision.

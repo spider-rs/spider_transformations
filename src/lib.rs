@@ -6,4 +6,7 @@ mod markup5ever_rcdom;
 /// Base transformations.
 pub mod transformation;
 // shortcut
-pub use transformation::content::{transform_content, transform_content_to_bytes};
+pub use transformation::content::{
+    transform_content, transform_content_input, transform_content_send_from_url_and_bytes,
+    transform_content_to_bytes,
+};
