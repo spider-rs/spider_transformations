@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.37.114"
+version = "2.37.115"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -32,7 +32,7 @@ url = "2"
 auto_encoder = "0.1"
 
 [dependencies.spider]
-version = "2"
+version = "2.47.12"
 default-features = false
 
 [dev-dependencies]

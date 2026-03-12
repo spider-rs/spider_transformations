@@ -873,7 +873,7 @@ pub fn transform_content_to_bytes(
     if is_binary_file(res.get_html_bytes_u8()) {
         let b = res.get_bytes();
         if let Some(b) = b {
-            b.clone()
+            b.to_vec()
         } else {
             Default::default()
         }

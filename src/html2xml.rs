@@ -16,7 +16,7 @@ pub fn convert_html_to_xml(
     encoding: &Option<String>,
 ) -> Result<String, Box<dyn Error>> {
     if encoding.is_some() {
-        let bytes: Box<Vec<u8>> = Box::new(base_convert_xml(html, url, encoding)?.into());
+        let bytes: Box<[u8]> = base_convert_xml(html, url, encoding)?.into_boxed_slice();
 
         Ok(get_html_encoded(
             &Some(bytes),
