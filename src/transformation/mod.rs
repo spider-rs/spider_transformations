@@ -49,7 +49,7 @@ mod tests {
         let mut conf = content::TransformConfig::default();
         let mut page_response = PageResponse::default();
 
-        page_response.content = Some(Box::new(markup.into()));
+        page_response.content = Some(markup.into());
         let page = build_with_parse(url, page_response);
 
         conf.return_format = ReturnFormat::Markdown;
@@ -109,7 +109,7 @@ mod tests {
         let mut conf = content::TransformConfig::default();
         let mut page_response = PageResponse::default();
         conf.return_format = ReturnFormat::XML;
-        page_response.content = Some(Box::new(markup.into()));
+        page_response.content = Some(markup.into());
         let page = build_with_parse(url, page_response);
         let content = content::transform_content(&page, &conf, &None, &None, &None);
         assert!(
@@ -127,7 +127,7 @@ mod tests {
         let mut conf = content::TransformConfig::default();
         let mut page_response = PageResponse::default();
 
-        page_response.content = Some(Box::new(markup.into()));
+        page_response.content = Some(markup.into());
         let page = build_with_parse(url, page_response);
 
         conf.return_format = ReturnFormat::Markdown;
@@ -152,7 +152,7 @@ mod tests {
         let mut conf = content::TransformConfig::default();
         let mut page_response = PageResponse::default();
 
-        page_response.content = Some(Box::new(markup.into()));
+        page_response.content = Some(markup.into());
         let page = build_with_parse(url, page_response);
 
         conf.return_format = ReturnFormat::Markdown;
@@ -177,7 +177,7 @@ mod tests {
         let mut conf = content::TransformConfig::default();
         let mut page_response = PageResponse::default();
 
-        page_response.content = Some(Box::new(markup.into()));
+        page_response.content = Some(markup.into());
         let page = build_with_parse(url, page_response);
 
         conf.return_format = ReturnFormat::Text;
@@ -202,7 +202,7 @@ mod tests {
         let mut conf = content::TransformConfig::default();
         let mut page_response = PageResponse::default();
 
-        page_response.content = Some(Box::new(markup.into()));
+        page_response.content = Some(markup.into());
         let page = build_with_parse(url, page_response);
 
         conf.return_format = ReturnFormat::Text;
@@ -232,7 +232,7 @@ mod tests {
         conf.return_format = ReturnFormat::XML;
         let mut page_response = PageResponse::default();
 
-        page_response.content = Some(Box::new(data));
+        page_response.content = Some(data);
 
         let page = build_with_parse("https://example.com/example.pdf", page_response);
 
