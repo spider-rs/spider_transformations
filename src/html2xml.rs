@@ -19,7 +19,7 @@ pub fn convert_html_to_xml(
         let bytes: Box<[u8]> = base_convert_xml(html, url, encoding)?.into_boxed_slice();
 
         Ok(get_html_encoded(
-            &Some(bytes),
+            &Some(bytes.into()),
             match encoding {
                 Some(encoding) => encoding,
                 _ => "UTF-8",
