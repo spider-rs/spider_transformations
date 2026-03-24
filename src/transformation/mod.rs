@@ -240,4 +240,227 @@ mod tests {
 
         assert!(content.is_empty(), "The tranform to markdown is invalid");
     }
+
+    // -------------------------------------------------------------------
+    // extract_text: two-pass fix tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_extract_text_no_custom_ignore() {
+        let html = r#"<div><p>Hello world</p><script>var x=1;</script></div>"#;
+        let result = super::text_extract::extract_text(html, &None);
+        assert!(result.contains("Hello world"), "should extract text: {result}");
+        assert!(!result.contains("var x"), "should exclude script content: {result}");
+    }
+
+    #[test]
+    fn test_extract_text_custom_ignore_strips_nested_element() {
+        // The bug: custom ignore tags via element! remove() didn't prevent
+        // text handlers from capturing the removed element's text when nested.
+        let html = r#"<div><div class="popup">popup text</div><p>real content</p></div>"#;
+        let mut ignore = std::collections::HashSet::new();
+        ignore.insert(".popup".to_string());
+
+        let result = super::text_extract::extract_text(html, &Some(ignore));
+        assert!(
+            !result.contains("popup text"),
+            "custom ignore should strip nested .popup text, got: {result}"
+        );
+        assert!(
+            result.contains("real content"),
+            "should preserve non-ignored text, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extract_text_custom_ignore_strips_deeply_nested() {
+        let html = r#"<body><div class="wrapper"><aside class="sidebar"><nav><ul><li>Link 1</li><li>Link 2</li></ul></nav></aside><main><p>Article content</p></main></div></body>"#;
+        let mut ignore = std::collections::HashSet::new();
+        ignore.insert(".sidebar".to_string());
+
+        let result = super::text_extract::extract_text(html, &Some(ignore));
+        assert!(
+            !result.contains("Link 1"),
+            "sidebar text should be stripped, got: {result}"
+        );
+        assert!(
+            result.contains("Article content"),
+            "main content preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extract_text_custom_ignore_multiple_selectors() {
+        let html = r#"<div><nav>nav text</nav><footer>footer text</footer><main>main text</main></div>"#;
+        let mut ignore = std::collections::HashSet::new();
+        ignore.insert("nav".to_string());
+        ignore.insert("footer".to_string());
+
+        let result = super::text_extract::extract_text(html, &Some(ignore));
+        assert!(
+            !result.contains("nav text"),
+            "nav should be stripped, got: {result}"
+        );
+        assert!(
+            !result.contains("footer text"),
+            "footer should be stripped, got: {result}"
+        );
+        assert!(
+            result.contains("main text"),
+            "main content preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extract_text_empty_custom_ignore() {
+        let html = r#"<div><p>content</p></div>"#;
+        let ignore = std::collections::HashSet::new();
+        let result = super::text_extract::extract_text(html, &Some(ignore));
+        assert!(
+            result.contains("content"),
+            "empty ignore set should not affect extraction, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extract_text_empty_html() {
+        let result = super::text_extract::extract_text("", &None);
+        assert!(result.is_empty(), "empty html should produce empty text");
+    }
+
+    #[test]
+    fn test_extract_text_script_style_svg_excluded() {
+        let html = r#"<div><p>visible</p><script>js code</script><style>.x{}</style><svg><text>svg text</text></svg><noscript>noscript</noscript></div>"#;
+        let result = super::text_extract::extract_text(html, &None);
+        assert!(result.contains("visible"), "should extract visible text");
+        assert!(!result.contains("js code"), "should exclude script");
+        assert!(!result.contains(".x{}"), "should exclude style");
+    }
+
+    #[tokio::test]
+    async fn test_extract_text_streaming_custom_ignore() {
+        let html = r#"<div><div class="popup">popup text</div><p>real content</p></div>"#;
+        let mut ignore = std::collections::HashSet::new();
+        ignore.insert(".popup".to_string());
+
+        let result =
+            super::text_extract::extract_text_streaming(html, &Some(ignore)).await;
+        assert!(
+            !result.contains("popup text"),
+            "streaming: custom ignore should strip .popup text, got: {result}"
+        );
+        assert!(
+            result.contains("real content"),
+            "streaming: should preserve non-ignored text, got: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_text_streaming_no_ignore() {
+        let html = r#"<div><p>hello</p><script>bad</script></div>"#;
+        let result =
+            super::text_extract::extract_text_streaming(html, &None).await;
+        assert!(result.contains("hello"), "streaming: should extract text");
+        assert!(!result.contains("bad"), "streaming: should exclude script");
+    }
+
+    // Regression: ensure the existing exclude_selector + Text format pipeline
+    // still works correctly end-to-end.
+    #[test]
+    fn test_transform_content_text_with_exclude_and_ignore() {
+        use maud::{html, DOCTYPE};
+
+        let markup = html! {
+            (DOCTYPE)
+            title { "Test Page" }
+            nav { "Navigation Menu" }
+            div class="sidebar" { "Sidebar Widget" }
+            main {
+                h1 { "Article" }
+                p { "Important content here." }
+            }
+            footer { "Footer Links" }
+        };
+
+        let url = "https://example.com";
+        let mut conf = content::TransformConfig::default();
+        let mut page_response = spider::utils::PageResponse::default();
+        page_response.content = Some(markup.into_string().into());
+        let page = build_with_parse(url, page_response);
+
+        conf.return_format = ReturnFormat::Text;
+
+        // With ignore_tags that should strip nav and footer
+        let ignore_tags = Some(vec!["nav".to_string(), "footer".to_string()]);
+
+        let result =
+            content::transform_content(&page, &conf, &None, &None, &ignore_tags);
+
+        assert!(
+            result.contains("Important content"),
+            "main content should be present, got: {result}"
+        );
+        assert!(
+            !result.contains("Navigation Menu"),
+            "nav should be stripped by ignore_tags, got: {result}"
+        );
+        assert!(
+            !result.contains("Footer Links"),
+            "footer should be stripped by ignore_tags, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_transform_content_text_with_selector_and_ignore() {
+        use maud::{html, DOCTYPE};
+
+        let markup = html! {
+            (DOCTYPE)
+            title { "Test" }
+            header { "Header" }
+            main {
+                div class="ad-banner" { "Ad content" }
+                p { "Real article text" }
+            }
+            footer { "Footer" }
+        };
+
+        let url = "https://example.com";
+        let mut conf = content::TransformConfig::default();
+        let mut page_response = spider::utils::PageResponse::default();
+        page_response.content = Some(markup.into_string().into());
+        let page = build_with_parse(url, page_response);
+
+        conf.return_format = ReturnFormat::Text;
+
+        // exclude_selector removes header/footer, ignore_tags removes .ad-banner
+        let mut select_config = SelectorConfiguration::default();
+        select_config.exclude_selector = Some("header, footer".into());
+        let ignore_tags = Some(vec![".ad-banner".to_string()]);
+
+        let result = content::transform_content(
+            &page,
+            &conf,
+            &None,
+            &Some(select_config),
+            &ignore_tags,
+        );
+
+        assert!(
+            result.contains("Real article text"),
+            "main content should be present, got: {result}"
+        );
+        assert!(
+            !result.contains("Header"),
+            "header should be excluded, got: {result}"
+        );
+        assert!(
+            !result.contains("Footer"),
+            "footer should be excluded, got: {result}"
+        );
+        assert!(
+            !result.contains("Ad content"),
+            "ad-banner should be stripped by ignore_tags, got: {result}"
+        );
+    }
 }

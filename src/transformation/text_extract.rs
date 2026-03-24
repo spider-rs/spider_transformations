@@ -1,30 +1,30 @@
 use html2md::extended::sifter::WhitespaceSifter;
-use lol_html::{element, html_content::TextType, text, RewriteStrSettings};
+use lol_html::{html_content::TextType, text, RewriteStrSettings};
 
 /// extract the text from HTML document.
+///
+/// If `custom` ignore tags are provided, they are stripped from the HTML in a
+/// first pass before text extraction. This ensures ignored elements' text is
+/// never captured, regardless of nesting depth.
 pub fn extract_text(html: &str, custom: &Option<std::collections::HashSet<String>>) -> String {
+    // Pass 1: strip ignored elements from the HTML so their text cannot leak
+    // into the extraction pass. lol_html's element remove() only affects the
+    // output bytes; text handlers still fire on removed elements' children.
+    // A two-pass approach avoids this entirely.
+    let cleaned;
+    let html = if let Some(ignore) = custom.as_ref().filter(|s| !s.is_empty()) {
+        let tags: Vec<&str> = ignore.iter().map(|s| s.as_str()).collect();
+        cleaned = super::content::clean_html_elements(html, tags);
+        cleaned.as_str()
+    } else {
+        html
+    };
+
+    // Pass 2: extract text from the (now clean) HTML.
     let mut extracted_text = String::new();
 
-    let mut element_content_handlers = Vec::with_capacity(
-        1 + custom
-            .as_ref()
-            .map_or(0, |c| if c.is_empty() { 0 } else { 1 }),
-    );
-
-    if let Some(ignore) = custom {
-        let ignore_handler = element!(
-            ignore.iter().cloned().collect::<Vec<String>>().join(","),
-            |el| {
-                el.remove();
-                Ok(())
-            }
-        );
-
-        element_content_handlers.push(ignore_handler);
-    }
-
-    element_content_handlers.push(text!(
-        "*:not(script):not(style):not(svg):not(noscript):not(nav):not(footer)",
+    let element_content_handlers = vec![text!(
+        "*:not(script):not(style):not(svg):not(noscript)",
         |text| {
             if let TextType::RCData | TextType::Data = text.text_type() {
                 let el_text = text.as_str().trim_start();
@@ -41,7 +41,7 @@ pub fn extract_text(html: &str, custom: &Option<std::collections::HashSet<String
 
             Ok(())
         }
-    ));
+    )];
 
     let _ = rewrite_str_empty(
         html,
@@ -66,31 +66,24 @@ pub async fn extract_text_streaming_with_size(
         return Default::default();
     }
 
+    // Pass 1: strip ignored elements so their text cannot leak.
+    let cleaned;
+    let html = if let Some(ignore) = custom.as_ref().filter(|s| !s.is_empty()) {
+        let tags: Vec<&str> = ignore.iter().map(|s| s.as_str()).collect();
+        cleaned = super::content::clean_html_elements(html, tags);
+        cleaned.as_str()
+    } else {
+        html
+    };
+
     let (txx, mut rxx) = spider::tokio::sync::mpsc::unbounded_channel();
 
-    let mut element_content_handlers = Vec::with_capacity(
-        1 + custom
-            .as_ref()
-            .map_or(0, |c| if c.is_empty() { 0 } else { 1 }),
-    );
-
-    if let Some(ignore) = custom {
-        let ignore_handler = element!(
-            ignore.iter().cloned().collect::<Vec<String>>().join(","),
-            |el| {
-                el.remove();
-                Ok(())
-            }
-        );
-
-        element_content_handlers.push(ignore_handler);
-    }
-
+    // Pass 2: extract text from the clean HTML.
     let mut extracted_text = String::new();
     let mut last_sent_position = 0;
 
-    element_content_handlers.push(text!(
-        "*:not(script):not(style):not(svg):not(noscript):not(nav):not(footer)",
+    let element_content_handlers = vec![text!(
+        "*:not(script):not(style):not(svg):not(noscript)",
         move |text| {
             if let TextType::RCData | TextType::Data = text.text_type() {
                 let el_text = text.as_str().trim_start();
@@ -123,7 +116,7 @@ pub async fn extract_text_streaming_with_size(
 
             Ok(())
         }
-    ));
+    )];
 
     let settings = lol_html::send::RewriteStrSettings {
         element_content_handlers,
