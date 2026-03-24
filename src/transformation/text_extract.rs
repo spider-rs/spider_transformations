@@ -1,31 +1,58 @@
 use html2md::extended::sifter::WhitespaceSifter;
-use lol_html::{html_content::TextType, text, RewriteStrSettings};
+use lol_html::{element, html_content::TextType, text, RewriteStrSettings};
 
 /// extract the text from HTML document.
 ///
-/// If `custom` ignore tags are provided, they are stripped from the HTML in a
-/// first pass before text extraction. This ensures ignored elements' text is
-/// never captured, regardless of nesting depth.
+/// If `custom` ignore tags are provided, a depth counter tracks when the
+/// parser is inside a removed element subtree. The text handler skips capture
+/// while the depth is > 0. Single-pass, zero extra allocation beyond an Rc.
 pub fn extract_text(html: &str, custom: &Option<std::collections::HashSet<String>>) -> String {
-    // Pass 1: strip ignored elements from the HTML so their text cannot leak
-    // into the extraction pass. lol_html's element remove() only affects the
-    // output bytes; text handlers still fire on removed elements' children.
-    // A two-pass approach avoids this entirely.
-    let cleaned;
-    let html = if let Some(ignore) = custom.as_ref().filter(|s| !s.is_empty()) {
-        let tags: Vec<&str> = ignore.iter().map(|s| s.as_str()).collect();
-        cleaned = super::content::clean_html_elements(html, tags);
-        cleaned.as_str()
-    } else {
-        html
-    };
+    use std::cell::Cell;
+    use std::rc::Rc;
 
-    // Pass 2: extract text from the (now clean) HTML.
+    // Depth counter: >0 means we are inside at least one ignored element.
+    // Rc<Cell> shared between element handler, end-tag handler, and text handler.
+    let ignore_depth = Rc::new(Cell::new(0u32));
+    let depth_text = ignore_depth.clone();
     let mut extracted_text = String::new();
 
-    let element_content_handlers = vec![text!(
+    let mut element_content_handlers: Vec<_> = Vec::with_capacity(
+        1 + custom
+            .as_ref()
+            .map_or(0, |c| if c.is_empty() { 0 } else { 1 }),
+    );
+
+    if let Some(ignore) = custom.as_ref().filter(|s| !s.is_empty()) {
+        let selector = ignore.iter().cloned().collect::<Vec<String>>().join(",");
+        let depth_el = ignore_depth.clone();
+
+        element_content_handlers.push(element!(selector, move |el| {
+            depth_el.set(depth_el.get() + 1);
+
+            let depth_end = depth_el.clone();
+            if let Some(handlers) = el.end_tag_handlers() {
+                let handler: lol_html::EndTagHandler<'static> = Box::new(move |_end| {
+                    let d = depth_end.get();
+                    if d > 0 {
+                        depth_end.set(d - 1);
+                    }
+                    Ok(())
+                });
+                handlers.push(handler);
+            }
+
+            el.remove();
+            Ok(())
+        }));
+    }
+
+    element_content_handlers.push(text!(
         "*:not(script):not(style):not(svg):not(noscript)",
         |text| {
+            if depth_text.get() > 0 {
+                return Ok(());
+            }
+
             if let TextType::RCData | TextType::Data = text.text_type() {
                 let el_text = text.as_str().trim_start();
                 if !el_text.is_empty() {
@@ -41,7 +68,7 @@ pub fn extract_text(html: &str, custom: &Option<std::collections::HashSet<String
 
             Ok(())
         }
-    )];
+    ));
 
     let _ = rewrite_str_empty(
         html,
@@ -61,30 +88,57 @@ pub async fn extract_text_streaming_with_size(
     chunk_size: usize,
 ) -> String {
     use spider::tokio_stream::StreamExt;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
 
     if html.is_empty() {
         return Default::default();
     }
 
-    // Pass 1: strip ignored elements so their text cannot leak.
-    let cleaned;
-    let html = if let Some(ignore) = custom.as_ref().filter(|s| !s.is_empty()) {
-        let tags: Vec<&str> = ignore.iter().map(|s| s.as_str()).collect();
-        cleaned = super::content::clean_html_elements(html, tags);
-        cleaned.as_str()
-    } else {
-        html
-    };
-
     let (txx, mut rxx) = spider::tokio::sync::mpsc::unbounded_channel();
 
-    // Pass 2: extract text from the clean HTML.
+    let ignore_depth = Arc::new(AtomicU32::new(0));
+    let depth_text = ignore_depth.clone();
     let mut extracted_text = String::new();
     let mut last_sent_position = 0;
 
-    let element_content_handlers = vec![text!(
+    let mut element_content_handlers: Vec<_> = Vec::with_capacity(
+        1 + custom
+            .as_ref()
+            .map_or(0, |c| if c.is_empty() { 0 } else { 1 }),
+    );
+
+    if let Some(ignore) = custom.as_ref().filter(|s| !s.is_empty()) {
+        let selector = ignore.iter().cloned().collect::<Vec<String>>().join(",");
+        let depth_el = ignore_depth.clone();
+
+        element_content_handlers.push(element!(selector, move |el| {
+            depth_el.fetch_add(1, Ordering::SeqCst);
+
+            let depth_end = depth_el.clone();
+            if let Some(handlers) = el.end_tag_handlers() {
+                let handler: lol_html::send::EndTagHandler<'static> =
+                    Box::new(move |_end| {
+                        depth_end.fetch_sub(1, Ordering::SeqCst);
+                        Ok(())
+                    });
+                handlers.push(handler);
+            }
+
+            el.remove();
+            Ok(())
+        }));
+    }
+
+    element_content_handlers.push(text!(
         "*:not(script):not(style):not(svg):not(noscript)",
         move |text| {
+            if depth_text.load(Ordering::SeqCst) > 0 {
+                return Ok(());
+            }
+
             if let TextType::RCData | TextType::Data = text.text_type() {
                 let el_text = text.as_str().trim_start();
 
@@ -116,7 +170,7 @@ pub async fn extract_text_streaming_with_size(
 
             Ok(())
         }
-    )];
+    ));
 
     let settings = lol_html::send::RewriteStrSettings {
         element_content_handlers,
