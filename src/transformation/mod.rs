@@ -2,6 +2,9 @@
 pub mod chunking;
 /// Content utils.
 pub mod content;
+/// Office document (xlsx, docx, pptx) conversion.
+#[cfg(feature = "document")]
+pub mod document;
 /// Text extraction.
 pub mod text_extract;
 

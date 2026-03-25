@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.37.119"
+version = "2.38.0"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -30,6 +30,9 @@ spider_scraper = "0.1"
 base64 =  {version = "0.22", optional = true }
 url = "2"
 auto_encoder = "0.1"
+calamine = { version = "0.26", optional = true }
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+quick-xml = { version = "0.37", optional = true }
 
 [dependencies.spider]
 version = "2.47.12"
@@ -44,3 +47,4 @@ indexset = ["indexmap"]
 serde = ["indexmap/serde", "spider/serde"]
 clippy = []
 screenshot = [ "dep:base64", "spider/chrome", "spider/cookies", "spider/real_browser"]
+document = ["dep:calamine", "dep:zip", "dep:quick-xml"]

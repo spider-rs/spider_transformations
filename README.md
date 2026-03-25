@@ -18,7 +18,7 @@ fn main() {
     // page comes from the spider object when streaming.
     let mut conf = content::TransformConfig::default();
     conf.return_format = content::ReturnFormat::Markdown;
-    let content = content::transform_content(&page, &conf, &None, &None);
+    let content = content::transform_content(&page, &conf, &None, &None, &None);
 }
 ```
 
@@ -28,7 +28,24 @@ fn main() {
 1. Commonmark
 1. Text
 1. Markdown (Text Map) or HTML2Text
-1. WIP: HTML2XML
+1. HTML2XML
+
+### Document formats (feature: `document`)
+
+Convert Office documents directly to markdown with zero panics and zero locks:
+
+1. Excel (.xlsx)
+1. Word (.docx)
+1. PowerPoint (.pptx)
+
+Enable with:
+
+```toml
+[dependencies]
+spider_transformations = { version = "2", features = ["document"] }
+```
+
+Document conversion is automatic — binary files matching Office formats are detected and converted to markdown tables and text. No configuration needed beyond enabling the feature.
 
 #### Enhancements
 

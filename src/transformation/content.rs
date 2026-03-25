@@ -444,6 +444,12 @@ pub fn transform_content(
 
     // prevent transforming binary files or re-encoding it
     if is_binary_file(res.get_html_bytes_u8()) {
+        #[cfg(feature = "document")]
+        {
+            if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+                return md;
+            }
+        }
         return base_html;
     }
 
@@ -526,6 +532,12 @@ pub async fn transform_content_send(
 
     // prevent transforming binary files or re-encoding it
     if is_binary_file(res.get_html_bytes_u8()) {
+        #[cfg(feature = "document")]
+        {
+            if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+                return md;
+            }
+        }
         return base_html;
     }
 
@@ -622,6 +634,12 @@ pub async fn transform_content_send_from_url_and_bytes(
 
     // prevent transforming binary files or re-encoding it
     if is_binary_file(input.content) {
+        #[cfg(feature = "document")]
+        {
+            if let Some(md) = crate::transformation::document::try_convert_document(input.content) {
+                return md;
+            }
+        }
         return base_html;
     }
 
@@ -730,6 +748,12 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
 
     // prevent transforming binary files or re-encoding it
     if is_binary_file(input.content) {
+        #[cfg(feature = "document")]
+        {
+            if let Some(md) = crate::transformation::document::try_convert_document(input.content) {
+                return md;
+            }
+        }
         return base_html;
     }
 
@@ -843,6 +867,12 @@ pub fn transform_content_to_bytes(
     ignore_tags: &Option<Vec<String>>,
 ) -> Vec<u8> {
     if is_binary_file(res.get_html_bytes_u8()) {
+        #[cfg(feature = "document")]
+        {
+            if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+                return md.into_bytes();
+            }
+        }
         let b = res.get_bytes();
         if let Some(b) = b {
             b.to_vec()
