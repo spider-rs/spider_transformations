@@ -10,7 +10,6 @@ fn main() {
 #[cfg(feature = "audio")]
 mod audio_model {
     use std::fs;
-    use std::io;
     use std::path::PathBuf;
 
     const MODEL_NAME: &str = "ggml-base.en.bin";
@@ -64,13 +63,15 @@ mod audio_model {
 
         let tmp = dest.with_extension("bin.part");
 
-        let resp = ureq::get(MODEL_URL).call()?;
+        let status = std::process::Command::new("curl")
+            .args(["-fSL", "-o"])
+            .arg(&tmp)
+            .arg(MODEL_URL)
+            .status()?;
 
-        let mut body = resp.into_body();
-        let mut reader = body.as_reader();
-        let mut file = fs::File::create(&tmp)?;
-        io::copy(&mut reader, &mut file)?;
-        drop(file);
+        if !status.success() {
+            return Err(format!("curl exited with status {status}").into());
+        }
 
         fs::rename(&tmp, dest)?;
 

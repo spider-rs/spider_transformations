@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.39.0"
+version = "2.39.1"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -40,8 +40,6 @@ whisper-rs = { version = "0.16", optional = true, default-features = false }
 version = "2.47.12"
 default-features = false
 
-[build-dependencies]
-ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 maud = "0.26"
