@@ -450,6 +450,12 @@ pub fn transform_content(
                 return md;
             }
         }
+        #[cfg(feature = "audio")]
+        {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(res.get_html_bytes_u8()) {
+                return md;
+            }
+        }
         return base_html;
     }
 
@@ -535,6 +541,12 @@ pub async fn transform_content_send(
         #[cfg(feature = "document")]
         {
             if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+                return md;
+            }
+        }
+        #[cfg(feature = "audio")]
+        {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(res.get_html_bytes_u8()) {
                 return md;
             }
         }
@@ -637,6 +649,12 @@ pub async fn transform_content_send_from_url_and_bytes(
         #[cfg(feature = "document")]
         {
             if let Some(md) = crate::transformation::document::try_convert_document(input.content) {
+                return md;
+            }
+        }
+        #[cfg(feature = "audio")]
+        {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(input.content) {
                 return md;
             }
         }
@@ -751,6 +769,12 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
         #[cfg(feature = "document")]
         {
             if let Some(md) = crate::transformation::document::try_convert_document(input.content) {
+                return md;
+            }
+        }
+        #[cfg(feature = "audio")]
+        {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(input.content) {
                 return md;
             }
         }
@@ -870,6 +894,12 @@ pub fn transform_content_to_bytes(
         #[cfg(feature = "document")]
         {
             if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+                return md.into_bytes();
+            }
+        }
+        #[cfg(feature = "audio")]
+        {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(res.get_html_bytes_u8()) {
                 return md.into_bytes();
             }
         }

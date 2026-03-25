@@ -5,6 +5,9 @@ pub mod content;
 /// Office document (xlsx, docx, pptx) conversion.
 #[cfg(feature = "document")]
 pub mod document;
+/// Audio file metadata extraction.
+#[cfg(feature = "audio")]
+pub mod audio;
 /// Text extraction.
 pub mod text_extract;
 
