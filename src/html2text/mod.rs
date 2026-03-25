@@ -510,7 +510,16 @@ impl RenderNode {
                 prefix_size: 0,
             },
             Table(ref t) => t.calc_size_estimate(context),
-            TableRow(..) | TableBody(_) | TableCell(_) => unimplemented!(),
+            TableRow(ref row, _) => row
+                .cells()
+                .map(|cell| cell.get_size_estimate())
+                .fold(Default::default(), SizeEstimate::add),
+            TableBody(ref rows) => rows
+                .iter()
+                .flat_map(|row| row.cells())
+                .map(|cell| cell.get_size_estimate())
+                .fold(Default::default(), SizeEstimate::add),
+            TableCell(ref cell) => cell.get_size_estimate(),
             FragStart(_) => Default::default(),
             BgColoured(_, ref v) | Coloured(_, ref v) => v
                 .iter()
@@ -620,7 +629,10 @@ fn precalc_size_estimate<'a, 'b: 'a, D: TextDecorator>(
                 postfn: None,
             }
         }
-        TableRow(..) | TableBody(_) | TableCell(_) => unimplemented!(),
+        TableRow(..) | TableBody(_) | TableCell(_) => {
+            let _ = node.calc_size_estimate(context, decorator);
+            TreeMapResult::Nothing
+        }
         BgColoured(_, ref v) | Coloured(_, ref v) => TreeMapResult::PendingChildren {
             children: v.iter().collect(),
             cons: Box::new(move |context, _cs| {
@@ -1656,16 +1668,19 @@ fn render_table_tree<T: Write, D: TextDecorator>(
                 if cur_width <= width {
                     break;
                 }
-                let (i, _) = match col_widths.iter().enumerate().max_by_key(|&(colno, width)| {
+                let (i, w) = match col_widths.iter().enumerate().max_by_key(|&(colno, width)| {
                     (
                         width.saturating_sub(col_sizes[colno].min_width),
                         width,
                         usize::MAX - colno,
                     )
                 }) {
-                    Some(d) => d,
-                    _ => (0, &0),
+                    Some((i, w)) => (i, *w),
+                    _ => break,
                 };
+                if w == 0 {
+                    break;
+                }
                 col_widths[i] -= 1;
             }
         }

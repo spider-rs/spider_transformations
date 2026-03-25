@@ -169,6 +169,7 @@ pub fn chunk_text(text: &str, algorithm: ChunkingAlgorithm) -> Vec<String> {
 
 /// Chunk by sentence.
 fn chunk_by_sentence(text: &str, sentences_per_chunk: usize) -> Vec<String> {
+    let sentences_per_chunk = sentences_per_chunk.max(1);
     let sentences: Vec<&str> = BY_SENTENCE.split(text).collect();
     // Group sentences into chunks
     let mut chunks = Vec::new();

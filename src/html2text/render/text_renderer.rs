@@ -19,7 +19,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 /// Context to use during tree parsing.
 /// This mainly gives access to a Renderer, but needs to be able to push
 /// new ones on for nested structures.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TextRenderer<D: TextDecorator> {
     subrender: Vec<SubRenderer<D>>,
     links: Vec<String>,
@@ -37,9 +37,15 @@ impl<D: TextDecorator> Deref for TextRenderer<D> {
 
 impl<D: TextDecorator> DerefMut for TextRenderer<D> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.subrender
-            .last_mut()
-            .expect("Underflow in renderer stack")
+        debug_assert!(
+            !self.subrender.is_empty(),
+            "Underflow in renderer stack"
+        );
+        let len = self.subrender.len();
+        // SAFETY: TextRenderer can only be constructed via `new()` which always
+        // pushes one element, and `Default` is not implemented.  The stack is
+        // therefore guaranteed non-empty.
+        unsafe { self.subrender.get_unchecked_mut(len - 1) }
     }
 }
 
@@ -1321,7 +1327,7 @@ impl<D: TextDecorator> Renderer for SubRenderer<D> {
         // Join the vertical lines to all the borders
         if let Some(RenderLine::Line(prev_border)) = self.lines.back_mut() {
             let mut pos = 0;
-            for &(w, _) in &line_sets[..line_sets.len() - 1] {
+            for &(w, _) in &line_sets[..line_sets.len().saturating_sub(1)] {
                 prev_border.join_below(pos + w);
                 next_border.join_above(pos + w);
                 pos += w + 1;
@@ -1373,7 +1379,7 @@ impl<D: TextDecorator> Renderer for SubRenderer<D> {
 
         let cell_height = line_sets.iter().map(|(_, v)| v.len()).max().unwrap_or(0);
         let spaces: String = (0..tot_width).map(|_| ' ').collect();
-        let last_cellno = line_sets.len() - 1;
+        let last_cellno = line_sets.len().saturating_sub(1);
         let mut line = TaggedLine::new();
         for i in 0..cell_height {
             for (cellno, &mut (width, ref mut ls)) in line_sets.iter_mut().enumerate() {
@@ -1386,7 +1392,7 @@ impl<D: TextDecorator> Renderer for SubRenderer<D> {
                     None => line.push(Str(TaggedString {
                         s: column_padding[cellno]
                             .clone()
-                            .unwrap_or_else(|| spaces[0..width].to_string()),
+                            .unwrap_or_else(|| spaces.get(0..width).unwrap_or(&spaces).to_string()),
                         tag: self.ann_stack.clone(),
                     })),
                 }

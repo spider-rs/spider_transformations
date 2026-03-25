@@ -463,4 +463,297 @@ mod tests {
             "ad-banner should be stripped by ignore_tags, got: {result}"
         );
     }
+
+    // ===================================================================
+    // Panic-freedom / lock-free audit tests
+    // ===================================================================
+
+    /// Verify html2text handles tables without panicking (previously used
+    /// `unimplemented!()` for TableRow/TableBody/TableCell size estimation).
+    #[test]
+    fn no_panic_html2text_with_tables() {
+        let html = r#"<table><thead><tr><th>A</th><th>B</th></tr></thead>
+            <tbody><tr><td>1</td><td>2</td></tr>
+            <tr><td>3</td><td>4</td></tr></tbody></table>"#;
+        let result = crate::html2text::from_read(html.as_bytes(), 80);
+        assert!(!result.is_empty(), "table rendering should produce output");
+    }
+
+    /// Nested tables should not panic.
+    #[test]
+    fn no_panic_html2text_nested_tables() {
+        let html = r#"<table><tr><td><table><tr><td>inner</td></tr></table></td></tr></table>"#;
+        let result = crate::html2text::from_read(html.as_bytes(), 80);
+        assert!(
+            result.contains("inner"),
+            "nested table content should render: {result}"
+        );
+    }
+
+    /// Very wide table with many columns should not panic.
+    #[test]
+    fn no_panic_html2text_wide_table() {
+        let mut html = String::from("<table><tr>");
+        for i in 0..100 {
+            html.push_str(&format!("<td>col{i}</td>"));
+        }
+        html.push_str("</tr></table>");
+        let result = crate::html2text::from_read(html.as_bytes(), 40);
+        // Should not panic even with narrow width and many columns.
+        assert!(!result.is_empty());
+    }
+
+    /// html2text with zero-width should not panic.
+    #[test]
+    fn no_panic_html2text_zero_width() {
+        let html = "<p>Hello world</p>";
+        // width=0 might return an error or empty, but must not panic
+        let result = crate::html2text::from_read(html.as_bytes(), 0);
+        let _ = result; // just verifying no panic
+    }
+
+    /// html2text with empty input should not panic.
+    #[test]
+    fn no_panic_html2text_empty() {
+        let result = crate::html2text::from_read("".as_bytes(), 80);
+        assert!(result.is_empty() || result.trim().is_empty());
+    }
+
+    /// Chunk by sentence with zero chunk size must not panic.
+    /// Previously `Vec::chunks(0)` would panic.
+    #[test]
+    fn no_panic_chunk_by_sentence_zero() {
+        use crate::transformation::chunking::{chunk_text, ChunkingAlgorithm};
+        let result = chunk_text("Hello world. How are you? Fine.", ChunkingAlgorithm::BySentence(0));
+        assert!(!result.is_empty(), "should produce at least one chunk");
+    }
+
+    /// Chunk by words with zero chunk size must not panic.
+    #[test]
+    fn no_panic_chunk_by_words_zero() {
+        use crate::transformation::chunking::{chunk_text, ChunkingAlgorithm};
+        let result = chunk_text("Hello world foo bar", ChunkingAlgorithm::ByWords(0));
+        // With 0, every word becomes its own chunk (>= 0 is always true)
+        assert!(!result.is_empty());
+    }
+
+    /// Chunk by lines with zero must not panic.
+    #[test]
+    fn no_panic_chunk_by_lines_zero() {
+        use crate::transformation::chunking::{chunk_text, ChunkingAlgorithm};
+        let result = chunk_text("line1\nline2\nline3", ChunkingAlgorithm::ByLines(0));
+        assert!(!result.is_empty());
+    }
+
+    /// Chunk by char length with zero must not panic.
+    #[test]
+    fn no_panic_chunk_by_char_zero() {
+        use crate::transformation::chunking::{chunk_text, ChunkingAlgorithm};
+        let result = chunk_text("abcdef", ChunkingAlgorithm::ByCharacterLength(0));
+        assert!(!result.is_empty());
+    }
+
+    /// Chunking on empty text must not panic for any algorithm.
+    #[test]
+    fn no_panic_chunk_empty_text() {
+        use crate::transformation::chunking::{chunk_text, ChunkingAlgorithm};
+        assert!(chunk_text("", ChunkingAlgorithm::ByWords(5)).is_empty());
+        assert!(chunk_text("", ChunkingAlgorithm::ByLines(5)).is_empty());
+        assert!(chunk_text("", ChunkingAlgorithm::ByCharacterLength(5)).is_empty());
+        // BySentence splits on regex, so empty string still produces one empty split
+        let _ = chunk_text("", ChunkingAlgorithm::BySentence(5));
+    }
+
+    /// extract_text with malformed/truncated HTML must not panic.
+    #[test]
+    fn no_panic_extract_text_malformed_html() {
+        let cases = [
+            "<div><p>unclosed",
+            "</p></div>stray closing",
+            "<sc<ript>broken tag",
+            "<<<>>>",
+            "<div attr=\"unclosed>text</div>",
+            &"<div>".repeat(1000),
+            "",
+        ];
+        for html in &cases {
+            let _ = super::text_extract::extract_text(html, &None);
+        }
+    }
+
+    /// Streaming extract_text with malformed HTML must not panic.
+    #[tokio::test]
+    async fn no_panic_extract_text_streaming_malformed() {
+        let cases = [
+            "<div><p>unclosed",
+            "</p></div>stray",
+            "<<<>>>",
+            "",
+        ];
+        for html in &cases {
+            let _ = super::text_extract::extract_text_streaming(html, &None).await;
+        }
+    }
+
+    /// All ReturnFormat variants on empty content must not panic.
+    #[test]
+    fn no_panic_transform_all_formats_empty() {
+        let url = "https://example.com";
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(Vec::new());
+        let page = build_with_parse(url, page_response);
+
+        let formats = [
+            ReturnFormat::Raw,
+            ReturnFormat::Text,
+            ReturnFormat::Markdown,
+            ReturnFormat::CommonMark,
+            ReturnFormat::Html2Text,
+            ReturnFormat::XML,
+            ReturnFormat::Bytes,
+            ReturnFormat::Empty,
+        ];
+        for fmt in &formats {
+            let mut conf = content::TransformConfig::default();
+            conf.return_format = *fmt;
+            let _ = content::transform_content(&page, &conf, &None, &None, &None);
+        }
+    }
+
+    /// All ReturnFormat variants on valid HTML must not panic.
+    #[test]
+    fn no_panic_transform_all_formats_valid() {
+        let markup = template().into_string();
+        let url = "https://spider.cloud";
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(markup.into());
+        let page = build_with_parse(url, page_response);
+
+        let formats = [
+            ReturnFormat::Raw,
+            ReturnFormat::Text,
+            ReturnFormat::Markdown,
+            ReturnFormat::CommonMark,
+            ReturnFormat::Html2Text,
+            ReturnFormat::XML,
+            ReturnFormat::Bytes,
+            ReturnFormat::Empty,
+        ];
+        for fmt in &formats {
+            let mut conf = content::TransformConfig::default();
+            conf.return_format = *fmt;
+            let _ = content::transform_content(&page, &conf, &None, &None, &None);
+        }
+    }
+
+    /// transform_content with readability on garbage HTML must not panic.
+    #[test]
+    fn no_panic_transform_readability_garbage() {
+        let html = "<html><body><div>some text</div><script>x</script></body></html>";
+        let url = "https://example.com";
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(html.into());
+        let page = build_with_parse(url, page_response);
+
+        let mut conf = content::TransformConfig::default();
+        conf.readability = true;
+        conf.return_format = ReturnFormat::Markdown;
+        let _ = content::transform_content(&page, &conf, &None, &None, &None);
+    }
+
+    /// XML conversion of non-UTF8-declared content must not panic.
+    #[test]
+    fn no_panic_xml_conversion_various_encodings() {
+        let html = "<html><head><meta charset='utf-8'></head><body>Hello</body></html>";
+        let url = "https://example.com";
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(html.into());
+        let page = build_with_parse(url, page_response);
+
+        let mut conf = content::TransformConfig::default();
+        conf.return_format = ReturnFormat::XML;
+
+        // With explicit encoding
+        let _ = content::transform_content(&page, &conf, &Some("UTF-8".into()), &None, &None);
+        // Without encoding
+        let _ = content::transform_content(&page, &conf, &None, &None, &None);
+        // With unknown encoding
+        let _ = content::transform_content(&page, &conf, &Some("FAKE-ENCODING".into()), &None, &None);
+    }
+
+    /// Large HTML document should not stack overflow or panic.
+    #[test]
+    fn no_panic_large_html() {
+        let mut html = String::with_capacity(100_000);
+        html.push_str("<html><body>");
+        for i in 0..1000 {
+            html.push_str(&format!("<p>Paragraph {i} with <b>bold</b> and <a href='#'>link</a></p>"));
+        }
+        html.push_str("</body></html>");
+
+        let result = crate::html2text::from_read(html.as_bytes(), 80);
+        assert!(!result.is_empty());
+
+        let _ = super::text_extract::extract_text(&html, &None);
+    }
+
+    /// Deeply nested HTML should not stack overflow.
+    #[test]
+    fn no_panic_deeply_nested_html() {
+        let depth = 200;
+        let mut html = String::new();
+        for _ in 0..depth {
+            html.push_str("<div>");
+        }
+        html.push_str("deep content");
+        for _ in 0..depth {
+            html.push_str("</div>");
+        }
+        let _ = crate::html2text::from_read(html.as_bytes(), 80);
+        let _ = super::text_extract::extract_text(&html, &None);
+    }
+
+    /// Async streaming variants must not panic on any format.
+    #[tokio::test]
+    async fn no_panic_transform_send_all_formats() {
+        let markup = template().into_string();
+        let url = "https://spider.cloud";
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(markup.into());
+        let page = build_with_parse(url, page_response);
+
+        let formats = [
+            ReturnFormat::Raw,
+            ReturnFormat::Text,
+            ReturnFormat::Markdown,
+            ReturnFormat::CommonMark,
+            ReturnFormat::Html2Text,
+            ReturnFormat::XML,
+            ReturnFormat::Bytes,
+            ReturnFormat::Empty,
+        ];
+        for fmt in formats {
+            let mut conf = content::TransformConfig::default();
+            conf.return_format = fmt;
+            let _ = content::transform_content_send(&page, &conf, &None, &None, &None).await;
+        }
+    }
+
+    /// Unicode / multibyte content must not panic in any path.
+    #[test]
+    fn no_panic_unicode_content() {
+        let html = "<html><body><p>日本語テスト</p><p>Ñoño café résumé</p><p>🦀🔥💯</p></body></html>";
+        let _ = crate::html2text::from_read(html.as_bytes(), 80);
+        let _ = super::text_extract::extract_text(html, &None);
+
+        let url = "https://example.com";
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(html.into());
+        let page = build_with_parse(url, page_response);
+        let mut conf = content::TransformConfig::default();
+        for fmt in [ReturnFormat::Text, ReturnFormat::Markdown, ReturnFormat::Html2Text] {
+            conf.return_format = fmt;
+            let _ = content::transform_content(&page, &conf, &None, &None, &None);
+        }
+    }
 }

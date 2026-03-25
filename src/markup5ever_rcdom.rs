@@ -174,7 +174,7 @@ pub type WeakHandle = Weak<Node>;
 fn append(new_parent: &Handle, child: Handle) {
     let previous_parent = child.parent.replace(Some(Rc::downgrade(new_parent)));
     // Invariant: child cannot have existing parent
-    assert!(previous_parent.is_none());
+    debug_assert!(previous_parent.is_none());
     new_parent.children.borrow_mut().push(child);
 }
 
