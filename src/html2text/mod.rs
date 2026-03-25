@@ -197,15 +197,18 @@ impl RenderTableRow {
         let mut colno = 0;
         let col_sizes = self.col_sizes.unwrap_or_default();
         for mut cell in self.cells {
-            let colspan = cell.colspan;
-            let col_width = if vertical {
-                col_sizes[colno]
+            let colspan = cell.colspan.max(1);
+            let col_width = if colno >= col_sizes.len() {
+                0
+            } else if vertical {
+                *col_sizes.get(colno).unwrap_or(&0)
             } else {
-                col_sizes[colno..colno + cell.colspan].iter().sum::<usize>()
+                let end = (colno + colspan).min(col_sizes.len());
+                col_sizes.get(colno..end).map(|s| s.iter().sum::<usize>()).unwrap_or(0)
             };
             // Skip any zero-width columns
             if col_width > 0 {
-                cell.col_width = Some(col_width + cell.colspan - 1);
+                cell.col_width = Some(col_width + colspan - 1);
                 result.push(RenderNode::new(RenderNodeInfo::TableCell(cell)));
             }
             colno += colspan;
@@ -245,13 +248,18 @@ impl RenderTable {
     /// Consume this and return a `Vec<RenderNode>` containing the children;
     /// the children know the column sizes required.
     pub fn into_rows(self, col_sizes: Vec<usize>, vert: bool) -> Vec<RenderNode> {
-        self.rows
-            .into_iter()
-            .map(|mut tr| {
-                tr.col_sizes = Some(col_sizes.clone());
-                RenderNode::new(RenderNodeInfo::TableRow(tr, vert))
-            })
-            .collect()
+        let mut col_sizes = col_sizes;
+        let len = self.rows.len();
+        let mut rows: Vec<RenderNode> = Vec::with_capacity(len);
+        for (i, mut tr) in self.rows.into_iter().enumerate() {
+            tr.col_sizes = Some(if i + 1 < len {
+                col_sizes.clone()
+            } else {
+                std::mem::take(&mut col_sizes)
+            });
+            rows.push(RenderNode::new(RenderNodeInfo::TableRow(tr, vert)));
+        }
+        rows
     }
 
     fn calc_size_estimate(&self, _context: &HtmlContext) -> SizeEstimate {
@@ -270,15 +278,18 @@ impl RenderTable {
         for row in self.rows() {
             let mut colno = 0usize;
             for cell in row.cells() {
+                let colspan = cell.colspan.max(1);
                 let cellsize = cell.get_size_estimate();
-                for colnum in 0..cell.colspan {
-                    sizes[colno + colnum].size += cellsize.size / cell.colspan;
-                    sizes[colno + colnum].min_width = max(
-                        sizes[colno + colnum].min_width,
-                        cellsize.min_width / cell.colspan,
-                    );
+                for colnum in 0..colspan {
+                    if let Some(entry) = sizes.get_mut(colno + colnum) {
+                        entry.size += cellsize.size / colspan;
+                        entry.min_width = max(
+                            entry.min_width,
+                            cellsize.min_width / colspan,
+                        );
+                    }
                 }
-                colno += cell.colspan;
+                colno += colspan;
             }
         }
         let size = sizes.iter().map(|s| s.size).sum(); // Include borders?
@@ -1517,7 +1528,7 @@ fn do_render_node<'b, T: Write, D: TextDecorator>(
         Table(tab) => render_table_tree(renderer, tab, err_out)?,
         TableRow(row, false) => render_table_row(renderer, row, err_out),
         TableRow(row, true) => render_table_row_vert(renderer, row, err_out),
-        TableBody(_) => unimplemented!("Unexpected TableBody while rendering"),
+        TableBody(_) => Finished(None),
         TableCell(cell) => render_table_cell(renderer, cell, err_out),
         FragStart(fragname) => {
             renderer.record_frag_start(&fragname);
@@ -1591,12 +1602,15 @@ fn render_table_tree<T: Write, D: TextDecorator>(
 
             // If the cell has a colspan>1, then spread its size between the
             // columns.
-            estimate.size /= cell.colspan;
-            estimate.min_width /= cell.colspan;
-            for i in 0..cell.colspan {
-                col_sizes[colno + i] = (col_sizes[colno + i]).max(estimate);
+            let colspan = cell.colspan.max(1);
+            estimate.size /= colspan;
+            estimate.min_width /= colspan;
+            for i in 0..colspan {
+                if let Some(entry) = col_sizes.get_mut(colno + i) {
+                    *entry = (*entry).max(estimate);
+                }
             }
-            colno += cell.colspan;
+            colno += colspan;
         }
     }
     // TODO: remove empty columns
@@ -1607,7 +1621,7 @@ fn render_table_tree<T: Write, D: TextDecorator>(
 
     let vert_row = renderer.options.raw || (min_size > width || width == 0);
 
-    let mut col_widths: Vec<usize> = if !vert_row {
+    let mut col_widths: Vec<usize> = if !vert_row && tot_size > 0 {
         col_sizes
             .iter()
             .map(|sz| {
@@ -1627,6 +1641,9 @@ fn render_table_tree<T: Write, D: TextDecorator>(
                 }
             })
             .collect()
+    } else if !vert_row {
+        // tot_size is zero — all columns empty, use min_widths
+        col_sizes.iter().map(|sz| sz.min_width).collect()
     } else {
         col_sizes.iter().map(|_| width).collect()
     };

@@ -222,8 +222,7 @@ fn chunk_by_character_length(text: &str, char_length: usize) -> Vec<String> {
     for c in text.chars() {
         current_chunk.push(c);
         if current_chunk.len() >= char_length {
-            result.push(current_chunk.clone());
-            current_chunk.clear();
+            result.push(std::mem::take(&mut current_chunk));
         }
     }
     if !current_chunk.is_empty() {

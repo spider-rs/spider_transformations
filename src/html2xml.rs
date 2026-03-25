@@ -128,11 +128,18 @@ fn qual_name_to_string(name: &QualName) -> String {
     }
 }
 
-/// Escape special characters for XML documents.
+/// Escape special characters for XML documents (single-pass).
 fn escape_xml(text: &str) -> String {
-    text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
-        .replace("'", "&apos;")
+    let mut result = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => result.push_str("&amp;"),
+            '<' => result.push_str("&lt;"),
+            '>' => result.push_str("&gt;"),
+            '"' => result.push_str("&quot;"),
+            '\'' => result.push_str("&apos;"),
+            _ => result.push(ch),
+        }
+    }
+    result
 }

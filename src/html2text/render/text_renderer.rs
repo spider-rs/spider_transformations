@@ -803,7 +803,16 @@ impl<T: Clone> BorderHoriz<T> {
 
     /// Return a string without destroying self
     pub fn to_string(&self) -> String {
-        self.clone().into_string()
+        self.segments
+            .iter()
+            .map(|seg| match *seg {
+                BorderSegHoriz::Straight => '─',
+                BorderSegHoriz::StraightVert => '/',
+                BorderSegHoriz::JoinAbove => '┴',
+                BorderSegHoriz::JoinBelow => '┬',
+                BorderSegHoriz::JoinCross => '┼',
+            })
+            .collect::<String>()
     }
 }
 

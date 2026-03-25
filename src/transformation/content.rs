@@ -267,6 +267,16 @@ pub(crate) fn build_static_vector(config: &TransformConfig) -> Vec<&'static str>
     tags
 }
 
+/// Build a HashSet of tag names from an ignore list.
+fn build_ignore_set(ignore: &[String]) -> std::collections::HashSet<String> {
+    ignore.iter().map(|s| s.clone()).collect()
+}
+
+/// Build a HashSet of tag names from a slice of &str.
+fn build_ignore_set_from_strs(ignore: &[&str]) -> std::collections::HashSet<String> {
+    ignore.iter().map(|&s| s.to_string()).collect()
+}
+
 /// transform the content to markdown shortcut
 pub fn transform_markdown(html: &str, commonmark: bool) -> String {
     html2md::rewrite_html_custom_with_url(html, &None, commonmark, &None)
@@ -475,15 +485,7 @@ pub fn transform_content(
         base_html
     };
 
-    let mut tag_factory = None;
-
-    if let Some(ignore) = ignore_tags {
-        let mut tag_factor = std::collections::HashSet::with_capacity(ignore.len());
-        for ignore_tag_name in ignore {
-            tag_factor.insert(ignore_tag_name.into());
-        }
-        tag_factory.replace(tag_factor);
-    }
+    let tag_factory = ignore_tags.as_ref().map(|v| build_ignore_set(v));
 
     match c.return_format {
         ReturnFormat::Empty => Default::default(),
@@ -505,10 +507,7 @@ pub fn transform_content(
         ReturnFormat::Text => super::text_extract::extract_text(&base_html, &tag_factory),
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            &match url_parsed {
-                Some(u) => u.to_string(),
-                _ => EXAMPLE_URL.to_string(),
-            },
+            url_parsed.as_ref().map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
             encoding,
         )
         .unwrap_or_default(),
@@ -568,15 +567,7 @@ pub async fn transform_content_send(
         base_html
     };
 
-    let mut tag_factory = None;
-
-    if let Some(ignore) = ignore_tags {
-        let mut tag_factor = std::collections::HashSet::with_capacity(ignore.len());
-        for ignore_tag_name in ignore {
-            tag_factor.insert(ignore_tag_name.into());
-        }
-        tag_factory.replace(tag_factor);
-    }
+    let tag_factory = ignore_tags.as_ref().map(|v| build_ignore_set(v));
 
     match c.return_format {
         ReturnFormat::Empty => Default::default(),
@@ -612,10 +603,7 @@ pub async fn transform_content_send(
         }
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            &match url_parsed {
-                Some(u) => u.to_string(),
-                _ => EXAMPLE_URL.to_string(),
-            },
+            url_parsed.as_ref().map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
             encoding,
         )
         .unwrap_or_default(),
@@ -671,13 +659,8 @@ pub async fn transform_content_send_from_url_and_bytes(
     };
 
     // Build ignore set only if needed
-    let tag_factory: Option<HashSet<String>> = input.ignore_tags.map(|ignore| {
-        let mut set = HashSet::with_capacity(ignore.len());
-        for &t in ignore {
-            set.insert(t.to_string());
-        }
-        set
-    });
+    let tag_factory: Option<HashSet<String>> =
+        input.ignore_tags.map(|ignore| build_ignore_set_from_strs(ignore));
 
     match c.return_format {
         ReturnFormat::Empty => String::new(),
@@ -729,10 +712,7 @@ pub async fn transform_content_send_from_url_and_bytes(
 
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            &input
-                .url
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| EXAMPLE_URL.to_string()),
+            input.url.map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
             &input.encoding.map(|s| s.to_string()),
         )
         .unwrap_or_default(),
@@ -787,13 +767,8 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
     };
 
     // Build ignore tag set only if needed by downstream (md/text extract).
-    let tag_factory: Option<HashSet<String>> = input.ignore_tags.map(|ignore| {
-        let mut set = HashSet::with_capacity(ignore.len());
-        for &t in ignore {
-            set.insert(t.to_string());
-        }
-        set
-    });
+    let tag_factory: Option<HashSet<String>> =
+        input.ignore_tags.map(|ignore| build_ignore_set_from_strs(ignore));
 
     match c.return_format {
         ReturnFormat::Empty => String::new(),
@@ -836,10 +811,7 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
 
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            &input
-                .url
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| EXAMPLE_URL.to_string()),
+            input.url.map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
             &input.encoding.map(|s| s.to_string()),
         )
         .unwrap_or_default(),
