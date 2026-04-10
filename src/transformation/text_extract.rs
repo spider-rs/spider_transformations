@@ -89,8 +89,8 @@ pub async fn extract_text_streaming_with_size(
 ) -> String {
     use spider::tokio_stream::StreamExt;
     use std::sync::{
-        Arc,
         atomic::{AtomicU32, Ordering},
+        Arc,
     };
 
     if html.is_empty() {
@@ -119,11 +119,10 @@ pub async fn extract_text_streaming_with_size(
 
             let depth_end = depth_el.clone();
             if let Some(handlers) = el.end_tag_handlers() {
-                let handler: lol_html::send::EndTagHandler<'static> =
-                    Box::new(move |_end| {
-                        depth_end.fetch_sub(1, Ordering::SeqCst);
-                        Ok(())
-                    });
+                let handler: lol_html::send::EndTagHandler<'static> = Box::new(move |_end| {
+                    depth_end.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                });
                 handlers.push(handler);
             }
 

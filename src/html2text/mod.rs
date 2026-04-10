@@ -204,7 +204,10 @@ impl RenderTableRow {
                 *col_sizes.get(colno).unwrap_or(&0)
             } else {
                 let end = (colno + colspan).min(col_sizes.len());
-                col_sizes.get(colno..end).map(|s| s.iter().sum::<usize>()).unwrap_or(0)
+                col_sizes
+                    .get(colno..end)
+                    .map(|s| s.iter().sum::<usize>())
+                    .unwrap_or(0)
             };
             // Skip any zero-width columns
             if col_width > 0 {
@@ -283,10 +286,7 @@ impl RenderTable {
                 for colnum in 0..colspan {
                     if let Some(entry) = sizes.get_mut(colno + colnum) {
                         entry.size += cellsize.size / colspan;
-                        entry.min_width = max(
-                            entry.min_width,
-                            cellsize.min_width / colspan,
-                        );
+                        entry.min_width = max(entry.min_width, cellsize.min_width / colspan);
                     }
                 }
                 colno += colspan;

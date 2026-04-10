@@ -147,12 +147,11 @@ fn decode_audio(bytes: &[u8]) -> Result<(Vec<f32>, u32, usize), AudioError> {
         .ok_or(AudioError::NoTrack)?;
 
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(WHISPER_SAMPLE_RATE);
-    let channels = track
+    let sample_rate = track
         .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(1);
+        .sample_rate
+        .unwrap_or(WHISPER_SAMPLE_RATE);
+    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -575,7 +574,10 @@ mod tests {
     #[test]
     fn test_default_model_path_set_at_build_time() {
         let path = env!("WHISPER_MODEL_PATH_DEFAULT");
-        assert!(!path.is_empty(), "build.rs should set WHISPER_MODEL_PATH_DEFAULT");
+        assert!(
+            !path.is_empty(),
+            "build.rs should set WHISPER_MODEL_PATH_DEFAULT"
+        );
         assert!(
             path.contains("whisper"),
             "default path should reference whisper cache: {path}"

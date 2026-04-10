@@ -300,7 +300,7 @@ pub fn transform_text_ignore(
     super::text_extract::extract_text(html, custom_ignore)
 }
 
-/// get the HTML content for the page.
+/// get the HTML content for the page (sync).
 fn get_html(res: &Page, encoding: &Option<String>) -> String {
     match encoding {
         Some(ref encoding) => res.get_html_encoded(encoding),
@@ -308,7 +308,7 @@ fn get_html(res: &Page, encoding: &Option<String>) -> String {
     }
 }
 
-/// Get HTML bytes safely, handling disk-spooled pages.
+/// Get HTML bytes safely, handling disk-spooled pages (sync).
 /// Returns Cow::Borrowed when in memory (zero cost), Cow::Owned when on disk.
 #[inline]
 fn get_html_bytes_safe(page: &Page) -> std::borrow::Cow<'_, [u8]> {
@@ -347,6 +347,15 @@ fn get_html_with_selector(
 ) -> String {
     use scraper::{Html, Selector};
     let html = get_html(res, encoding);
+
+    get_html_with_selector_impl(html, selector_config)
+}
+
+fn get_html_with_selector_impl(
+    html: String,
+    selector_config: &Option<SelectorConfiguration>,
+) -> String {
+    use scraper::{Html, Selector};
 
     if let Some(selector_config) = selector_config.as_ref() {
         let mut fragment = Html::parse_fragment(&html);
@@ -536,7 +545,10 @@ pub fn transform_content(
         ReturnFormat::Text => super::text_extract::extract_text(&base_html, &tag_factory),
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            url_parsed.as_ref().map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
+            url_parsed
+                .as_ref()
+                .map(|u| u.as_str())
+                .unwrap_or(EXAMPLE_URL.as_str()),
             encoding,
         )
         .unwrap_or_default(),
@@ -544,6 +556,15 @@ pub fn transform_content(
 }
 
 /// Transform format the content send.
+/// Transform a page's content using the byte-based pipeline.
+///
+/// When the page's HTML is in memory, bytes are used directly (zero-copy).
+/// When on disk (`is_html_on_disk()`), content is read asynchronously via
+/// `get_html_async()` — no sync blocking on tokio workers.
+///
+/// The actual transformation is delegated to
+/// [`transform_content_send_from_url_and_bytes`] which handles selectors,
+/// readability, markdown, text extraction, etc. from raw bytes.
 pub async fn transform_content_send(
     res: &Page,
     c: &TransformConfig,
@@ -551,106 +572,53 @@ pub async fn transform_content_send(
     selector_config: &Option<SelectorConfiguration>,
     ignore_tags: &Option<Vec<String>>,
 ) -> String {
-    let base_html = get_html_with_selector(res, encoding, selector_config);
+    let ignore_strs: Option<Vec<&str>> = ignore_tags
+        .as_ref()
+        .map(|v| v.iter().map(|s| s.as_str()).collect());
 
-    // prevent transforming binary files or re-encoding it
-    let html_bytes = get_html_bytes_safe(res);
-    if is_binary_file(&*html_bytes) {
-        #[cfg(feature = "document")]
-        {
-            if let Some(md) = crate::transformation::document::try_convert_document(&*html_bytes) {
-                return md;
-            }
-        }
-        #[cfg(feature = "audio")]
-        {
-            if let Some(md) = crate::transformation::audio::try_convert_audio(&*html_bytes) {
-                return md;
-            }
-        }
-        return base_html;
-    }
-    drop(html_bytes);
-
-    let url_parsed = res.get_url_parsed_ref();
-
-    let base_html = {
-        let mut ignore_list = build_static_vector(c);
-
-        if let Some(ignore) = ignore_tags {
-            ignore_list.extend(ignore.iter().map(|s| s.as_str()));
-        }
-
-        if ignore_list.is_empty() {
-            base_html
-        } else {
-            clean_html_elements(&base_html, ignore_list)
-        }
-    };
-
-    // process readability
-    let base_html = if c.readability {
-        match llm_readability::extractor::extract(
-            &mut base_html.as_bytes(),
-            match url_parsed {
-                Some(u) => u,
-                _ => &EXAMPLE_URL,
+    // Fast path: content is in memory — use bytes directly, no async overhead.
+    if !res.is_html_on_disk() {
+        let bytes = get_html_bytes_safe(res);
+        let input = TransformInput {
+            url: res.get_url_parsed_ref().as_ref(),
+            content: &bytes,
+            screenshot_bytes: {
+                #[cfg(feature = "screenshot")]
+                {
+                    res.screenshot_bytes.as_deref()
+                }
+                #[cfg(not(feature = "screenshot"))]
+                {
+                    None
+                }
             },
-        ) {
-            Ok(product) => product.content,
-            _ => base_html,
-        }
-    } else {
-        base_html
-    };
-
-    let base_html = if c.clean_html {
-        clean_html(&base_html)
-    } else {
-        base_html
-    };
-
-    let tag_factory = ignore_tags.as_ref().map(|v| build_ignore_set(v));
-
-    match c.return_format {
-        ReturnFormat::Empty => Default::default(),
-        ReturnFormat::Screenshot => get_screenshot(&res),
-        ReturnFormat::Raw | ReturnFormat::Bytes => base_html,
-        ReturnFormat::CommonMark => {
-            html2md::rewrite_html_custom_with_url_streaming(
-                &base_html,
-                &tag_factory,
-                true,
-                url_parsed,
-            )
-            .await
-        }
-        ReturnFormat::Markdown => {
-            html2md::rewrite_html_custom_with_url_streaming(
-                &base_html,
-                &tag_factory,
-                false,
-                url_parsed,
-            )
-            .await
-        }
-        ReturnFormat::Html2Text => {
-            if !base_html.is_empty() {
-                crate::html2text::from_read(base_html.as_bytes(), base_html.len())
-            } else {
-                base_html
-            }
-        }
-        ReturnFormat::Text => {
-            super::text_extract::extract_text_streaming(&base_html, &tag_factory).await
-        }
-        ReturnFormat::XML => convert_html_to_xml(
-            base_html.trim(),
-            url_parsed.as_ref().map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
-            encoding,
-        )
-        .unwrap_or_default(),
+            encoding: encoding.as_deref(),
+            selector_config: selector_config.as_ref(),
+            ignore_tags: ignore_strs.as_deref(),
+        };
+        return transform_content_send_from_url_and_bytes(input, c).await;
     }
+
+    // Disk path: read content asynchronously, then feed to the byte pipeline.
+    let html = res.get_html_async().await;
+    let input = TransformInput {
+        url: res.get_url_parsed_ref().as_ref(),
+        content: html.as_bytes(),
+        screenshot_bytes: {
+            #[cfg(feature = "screenshot")]
+            {
+                res.screenshot_bytes.as_deref()
+            }
+            #[cfg(not(feature = "screenshot"))]
+            {
+                None
+            }
+        },
+        encoding: encoding.as_deref(),
+        selector_config: selector_config.as_ref(),
+        ignore_tags: ignore_strs.as_deref(),
+    };
+    transform_content_send_from_url_and_bytes(input, c).await
 }
 
 /// Transform content input send.
@@ -714,8 +682,9 @@ pub async fn transform_content_send_from_url_and_bytes(
     };
 
     // Build ignore set only if needed
-    let tag_factory: Option<HashSet<String>> =
-        input.ignore_tags.map(|ignore| build_ignore_set_from_strs(ignore));
+    let tag_factory: Option<HashSet<String>> = input
+        .ignore_tags
+        .map(|ignore| build_ignore_set_from_strs(ignore));
 
     match c.return_format {
         ReturnFormat::Empty => String::new(),
@@ -767,7 +736,10 @@ pub async fn transform_content_send_from_url_and_bytes(
 
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            input.url.map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
+            input
+                .url
+                .map(|u| u.as_str())
+                .unwrap_or(EXAMPLE_URL.as_str()),
             &input.encoding.map(|s| s.to_string()),
         )
         .unwrap_or_default(),
@@ -834,8 +806,9 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
     };
 
     // Build ignore tag set only if needed by downstream (md/text extract).
-    let tag_factory: Option<HashSet<String>> =
-        input.ignore_tags.map(|ignore| build_ignore_set_from_strs(ignore));
+    let tag_factory: Option<HashSet<String>> = input
+        .ignore_tags
+        .map(|ignore| build_ignore_set_from_strs(ignore));
 
     match c.return_format {
         ReturnFormat::Empty => String::new(),
@@ -878,7 +851,10 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
 
         ReturnFormat::XML => convert_html_to_xml(
             base_html.trim(),
-            input.url.map(|u| u.as_str()).unwrap_or(EXAMPLE_URL.as_str()),
+            input
+                .url
+                .map(|u| u.as_str())
+                .unwrap_or(EXAMPLE_URL.as_str()),
             &input.encoding.map(|s| s.to_string()),
         )
         .unwrap_or_default(),
@@ -909,16 +885,17 @@ pub fn transform_content_to_bytes(
     selector_config: &Option<SelectorConfiguration>,
     ignore_tags: &Option<Vec<String>>,
 ) -> Vec<u8> {
-    if is_binary_file(res.get_html_bytes_u8()) {
+    let html_raw = get_html_bytes_safe(res);
+    if is_binary_file(&html_raw) {
         #[cfg(feature = "document")]
         {
-            if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+            if let Some(md) = crate::transformation::document::try_convert_document(&html_raw) {
                 return md.into_bytes();
             }
         }
         #[cfg(feature = "audio")]
         {
-            if let Some(md) = crate::transformation::audio::try_convert_audio(res.get_html_bytes_u8()) {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(&html_raw) {
                 return md.into_bytes();
             }
         }

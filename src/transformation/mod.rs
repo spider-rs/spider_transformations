@@ -1,3 +1,6 @@
+/// Audio file metadata extraction.
+#[cfg(feature = "audio")]
+pub mod audio;
 /// Chunking utils.
 pub mod chunking;
 /// Content utils.
@@ -5,9 +8,6 @@ pub mod content;
 /// Office document (xlsx, docx, pptx) conversion.
 #[cfg(feature = "document")]
 pub mod document;
-/// Audio file metadata extraction.
-#[cfg(feature = "audio")]
-pub mod audio;
 /// Text extraction.
 pub mod text_extract;
 
@@ -255,8 +255,14 @@ mod tests {
     fn test_extract_text_no_custom_ignore() {
         let html = r#"<div><p>Hello world</p><script>var x=1;</script></div>"#;
         let result = super::text_extract::extract_text(html, &None);
-        assert!(result.contains("Hello world"), "should extract text: {result}");
-        assert!(!result.contains("var x"), "should exclude script content: {result}");
+        assert!(
+            result.contains("Hello world"),
+            "should extract text: {result}"
+        );
+        assert!(
+            !result.contains("var x"),
+            "should exclude script content: {result}"
+        );
     }
 
     #[test]
@@ -297,7 +303,8 @@ mod tests {
 
     #[test]
     fn test_extract_text_custom_ignore_multiple_selectors() {
-        let html = r#"<div><nav>nav text</nav><footer>footer text</footer><main>main text</main></div>"#;
+        let html =
+            r#"<div><nav>nav text</nav><footer>footer text</footer><main>main text</main></div>"#;
         let mut ignore = std::collections::HashSet::new();
         ignore.insert("nav".to_string());
         ignore.insert("footer".to_string());
@@ -349,8 +356,7 @@ mod tests {
         let mut ignore = std::collections::HashSet::new();
         ignore.insert(".popup".to_string());
 
-        let result =
-            super::text_extract::extract_text_streaming(html, &Some(ignore)).await;
+        let result = super::text_extract::extract_text_streaming(html, &Some(ignore)).await;
         assert!(
             !result.contains("popup text"),
             "streaming: custom ignore should strip .popup text, got: {result}"
@@ -364,8 +370,7 @@ mod tests {
     #[tokio::test]
     async fn test_extract_text_streaming_no_ignore() {
         let html = r#"<div><p>hello</p><script>bad</script></div>"#;
-        let result =
-            super::text_extract::extract_text_streaming(html, &None).await;
+        let result = super::text_extract::extract_text_streaming(html, &None).await;
         assert!(result.contains("hello"), "streaming: should extract text");
         assert!(!result.contains("bad"), "streaming: should exclude script");
     }
@@ -399,8 +404,7 @@ mod tests {
         // With ignore_tags that should strip nav and footer
         let ignore_tags = Some(vec!["nav".to_string(), "footer".to_string()]);
 
-        let result =
-            content::transform_content(&page, &conf, &None, &None, &ignore_tags);
+        let result = content::transform_content(&page, &conf, &None, &None, &ignore_tags);
 
         assert!(
             result.contains("Important content"),
@@ -444,13 +448,8 @@ mod tests {
         select_config.exclude_selector = Some("header, footer".into());
         let ignore_tags = Some(vec![".ad-banner".to_string()]);
 
-        let result = content::transform_content(
-            &page,
-            &conf,
-            &None,
-            &Some(select_config),
-            &ignore_tags,
-        );
+        let result =
+            content::transform_content(&page, &conf, &None, &Some(select_config), &ignore_tags);
 
         assert!(
             result.contains("Real article text"),
@@ -530,7 +529,10 @@ mod tests {
     #[test]
     fn no_panic_chunk_by_sentence_zero() {
         use crate::transformation::chunking::{chunk_text, ChunkingAlgorithm};
-        let result = chunk_text("Hello world. How are you? Fine.", ChunkingAlgorithm::BySentence(0));
+        let result = chunk_text(
+            "Hello world. How are you? Fine.",
+            ChunkingAlgorithm::BySentence(0),
+        );
         assert!(!result.is_empty(), "should produce at least one chunk");
     }
 
@@ -590,12 +592,7 @@ mod tests {
     /// Streaming extract_text with malformed HTML must not panic.
     #[tokio::test]
     async fn no_panic_extract_text_streaming_malformed() {
-        let cases = [
-            "<div><p>unclosed",
-            "</p></div>stray",
-            "<<<>>>",
-            "",
-        ];
+        let cases = ["<div><p>unclosed", "</p></div>stray", "<<<>>>", ""];
         for html in &cases {
             let _ = super::text_extract::extract_text_streaming(html, &None).await;
         }
@@ -684,7 +681,8 @@ mod tests {
         // Without encoding
         let _ = content::transform_content(&page, &conf, &None, &None, &None);
         // With unknown encoding
-        let _ = content::transform_content(&page, &conf, &Some("FAKE-ENCODING".into()), &None, &None);
+        let _ =
+            content::transform_content(&page, &conf, &Some("FAKE-ENCODING".into()), &None, &None);
     }
 
     /// Large HTML document should not stack overflow or panic.
@@ -693,7 +691,9 @@ mod tests {
         let mut html = String::with_capacity(100_000);
         html.push_str("<html><body>");
         for i in 0..1000 {
-            html.push_str(&format!("<p>Paragraph {i} with <b>bold</b> and <a href='#'>link</a></p>"));
+            html.push_str(&format!(
+                "<p>Paragraph {i} with <b>bold</b> and <a href='#'>link</a></p>"
+            ));
         }
         html.push_str("</body></html>");
 
@@ -748,7 +748,8 @@ mod tests {
     /// Unicode / multibyte content must not panic in any path.
     #[test]
     fn no_panic_unicode_content() {
-        let html = "<html><body><p>日本語テスト</p><p>Ñoño café résumé</p><p>🦀🔥💯</p></body></html>";
+        let html =
+            "<html><body><p>日本語テスト</p><p>Ñoño café résumé</p><p>🦀🔥💯</p></body></html>";
         let _ = crate::html2text::from_read(html.as_bytes(), 80);
         let _ = super::text_extract::extract_text(html, &None);
 
@@ -757,7 +758,11 @@ mod tests {
         page_response.content = Some(html.into());
         let page = build_with_parse(url, page_response);
         let mut conf = content::TransformConfig::default();
-        for fmt in [ReturnFormat::Text, ReturnFormat::Markdown, ReturnFormat::Html2Text] {
+        for fmt in [
+            ReturnFormat::Text,
+            ReturnFormat::Markdown,
+            ReturnFormat::Html2Text,
+        ] {
             conf.return_format = fmt;
             let _ = content::transform_content(&page, &conf, &None, &None, &None);
         }

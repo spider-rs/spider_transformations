@@ -175,11 +175,7 @@ pub(crate) fn to_markdown(bytes: &[u8]) -> Result<String, DocumentError> {
                             current_cell.push_str(&paragraph_text);
                         } else if !paragraph_text.is_empty() {
                             // Emit the paragraph
-                            emit_paragraph(
-                                &mut out,
-                                &paragraph_text,
-                                heading_level,
-                            );
+                            emit_paragraph(&mut out, &paragraph_text, heading_level);
                         }
 
                         paragraph_text.clear();

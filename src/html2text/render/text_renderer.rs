@@ -37,10 +37,7 @@ impl<D: TextDecorator> Deref for TextRenderer<D> {
 
 impl<D: TextDecorator> DerefMut for TextRenderer<D> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        debug_assert!(
-            !self.subrender.is_empty(),
-            "Underflow in renderer stack"
-        );
+        debug_assert!(!self.subrender.is_empty(), "Underflow in renderer stack");
         let len = self.subrender.len();
         // SAFETY: TextRenderer can only be constructed via `new()` which always
         // pushes one element, and `Default` is not implemented.  The stack is

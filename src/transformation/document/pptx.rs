@@ -75,10 +75,7 @@ fn extract_slide_number(name: &str) -> u32 {
 }
 
 /// Parse a single slide's XML and append text/tables to the output.
-fn parse_slide<R: std::io::Read>(
-    reader_source: R,
-    out: &mut String,
-) -> Result<(), DocumentError> {
+fn parse_slide<R: std::io::Read>(reader_source: R, out: &mut String) -> Result<(), DocumentError> {
     let mut reader = Reader::from_reader(std::io::BufReader::new(reader_source));
     reader.config_mut().trim_text(true);
 
