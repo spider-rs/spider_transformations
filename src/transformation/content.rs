@@ -308,6 +308,21 @@ fn get_html(res: &Page, encoding: &Option<String>) -> String {
     }
 }
 
+/// Get HTML bytes safely, handling disk-spooled pages.
+/// Returns Cow::Borrowed when in memory (zero cost), Cow::Owned when on disk.
+#[inline]
+fn get_html_bytes_safe(page: &Page) -> std::borrow::Cow<'_, [u8]> {
+    let mem = page.get_html_bytes_u8();
+    if !mem.is_empty() {
+        return std::borrow::Cow::Borrowed(mem);
+    }
+    #[cfg(feature = "balance")]
+    if page.is_html_on_disk() {
+        return std::borrow::Cow::Owned(page.get_html().into_bytes());
+    }
+    std::borrow::Cow::Borrowed(mem)
+}
+
 /// get the screenshot as base64
 #[cfg(feature = "screenshot")]
 fn get_screenshot(res: &Page) -> String {
@@ -443,21 +458,23 @@ pub fn transform_content(
     let base_html = get_html_with_selector(res, encoding, selector_config);
 
     // prevent transforming binary files or re-encoding it
-    if is_binary_file(res.get_html_bytes_u8()) {
+    let html_bytes = get_html_bytes_safe(res);
+    if is_binary_file(&*html_bytes) {
         #[cfg(feature = "document")]
         {
-            if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+            if let Some(md) = crate::transformation::document::try_convert_document(&*html_bytes) {
                 return md;
             }
         }
         #[cfg(feature = "audio")]
         {
-            if let Some(md) = crate::transformation::audio::try_convert_audio(res.get_html_bytes_u8()) {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(&*html_bytes) {
                 return md;
             }
         }
         return base_html;
     }
+    drop(html_bytes);
 
     let url_parsed = res.get_url_parsed_ref();
 
@@ -537,21 +554,23 @@ pub async fn transform_content_send(
     let base_html = get_html_with_selector(res, encoding, selector_config);
 
     // prevent transforming binary files or re-encoding it
-    if is_binary_file(res.get_html_bytes_u8()) {
+    let html_bytes = get_html_bytes_safe(res);
+    if is_binary_file(&*html_bytes) {
         #[cfg(feature = "document")]
         {
-            if let Some(md) = crate::transformation::document::try_convert_document(res.get_html_bytes_u8()) {
+            if let Some(md) = crate::transformation::document::try_convert_document(&*html_bytes) {
                 return md;
             }
         }
         #[cfg(feature = "audio")]
         {
-            if let Some(md) = crate::transformation::audio::try_convert_audio(res.get_html_bytes_u8()) {
+            if let Some(md) = crate::transformation::audio::try_convert_audio(&*html_bytes) {
                 return md;
             }
         }
         return base_html;
     }
+    drop(html_bytes);
 
     let url_parsed = res.get_url_parsed_ref();
 
