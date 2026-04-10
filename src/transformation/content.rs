@@ -576,7 +576,26 @@ pub async fn transform_content_send(
         .as_ref()
         .map(|v| v.iter().map(|s| s.as_str()).collect());
 
-    // Fast path: content is in memory — use bytes directly, no async overhead.
+    // Fast binary check from the stored flag — avoids loading bytes just
+    // to detect binary when the flag was already set at page build time.
+    if res.binary_file {
+        // Use async when on disk, sync when in memory.
+        let bytes: std::borrow::Cow<'_, [u8]> = if res.is_html_on_disk() {
+            std::borrow::Cow::Owned(res.get_html_async().await.into_bytes())
+        } else {
+            get_html_bytes_safe(res)
+        };
+        #[cfg(feature = "document")]
+        if let Some(md) = crate::transformation::document::try_convert_document(&bytes) {
+            return md;
+        }
+        #[cfg(feature = "audio")]
+        if let Some(md) = crate::transformation::audio::try_convert_audio(&bytes) {
+            return md;
+        }
+        return String::new();
+    }
+
     if !res.is_html_on_disk() {
         let bytes = get_html_bytes_safe(res);
         let input = TransformInput {
@@ -886,7 +905,7 @@ pub fn transform_content_to_bytes(
     ignore_tags: &Option<Vec<String>>,
 ) -> Vec<u8> {
     let html_raw = get_html_bytes_safe(res);
-    if is_binary_file(&html_raw) {
+    if res.binary_file || is_binary_file(&html_raw) {
         #[cfg(feature = "document")]
         {
             if let Some(md) = crate::transformation::document::try_convert_document(&html_raw) {
