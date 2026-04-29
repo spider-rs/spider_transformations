@@ -47,6 +47,27 @@ mod tests {
         markup
     }
 
+    /// Compile-time guarantee that `transform_content_send_from_url_and_bytes`
+    /// returns a `Send` future. If a non-`Send` type leaks into the body
+    /// (e.g. by re-introducing `extract_async`/`from_read_async`-style
+    /// `RcDom`-based async helpers), this test will fail to compile.
+    #[test]
+    fn transform_content_send_future_is_send() {
+        fn assert_send<T: Send>(_: &T) {}
+        let conf = content::TransformConfig::default();
+        let bytes: &[u8] = b"<html><body><p>hi</p></body></html>";
+        let input = content::TransformInput {
+            url: None,
+            content: bytes,
+            screenshot_bytes: None,
+            encoding: None,
+            selector_config: None,
+            ignore_tags: None,
+        };
+        let fut = content::transform_content_send_from_url_and_bytes(input, &conf);
+        assert_send(&fut);
+    }
+
     #[test]
     fn test_transformations() {
         let markup = template().into_string();

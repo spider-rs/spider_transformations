@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.39.11"
+version = "2.39.12"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"

@@ -456,6 +456,201 @@ fn get_html_with_selector_bytes(
     fragment.root_element().html()
 }
 
+/// Async streaming variant of [`get_html_with_selector_bytes`].
+///
+/// Uses `lol_html::send::HtmlRewriter` so the future stays `Send`, then
+/// chunk-feeds the rewriter and `yield_now`s between chunks so a long
+/// document doesn't monopolize the executor. No DOM is built — selector
+/// matching streams over the input.
+///
+/// - No selectors → passthrough (no parse).
+/// - exclude only → single streaming pass with `el.remove()`.
+/// - root only → streaming pass that injects sentinel comment markers
+///   around the first match; the matched subtree is sliced out of the
+///   serialized output.
+/// - root + exclude → root extraction first, then a second streaming
+///   pass to remove excludes.
+async fn get_html_with_selector_bytes_async(
+    content: &[u8],
+    encoding: Option<&str>,
+    selector_config: Option<&SelectorConfiguration>,
+) -> String {
+    let html = match encoding {
+        Some(e) => auto_encoder::encode_bytes(content, e),
+        _ => auto_encoder::auto_encode_bytes(content),
+    };
+
+    let Some(cfg) = selector_config else {
+        return html;
+    };
+
+    if cfg.root_selector.is_none() && cfg.exclude_selector.is_none() {
+        return html;
+    }
+
+    const CHUNK_SIZE: usize = 8192;
+
+    // Stage 1: optional root extraction.
+    let after_root: Vec<u8> = if let Some(root_sel) = cfg.root_selector.as_deref() {
+        match extract_root_subtree_async(html.as_bytes(), root_sel, CHUNK_SIZE).await {
+            Some(b) => b,
+            None => html.into_bytes(),
+        }
+    } else {
+        html.into_bytes()
+    };
+
+    // Stage 2: optional exclude removal.
+    let final_bytes: Vec<u8> = if let Some(excl) = cfg.exclude_selector.as_deref() {
+        match remove_excludes_async(&after_root, excl, CHUNK_SIZE).await {
+            Some(b) => b,
+            None => after_root,
+        }
+    } else {
+        after_root
+    };
+
+    match String::from_utf8(final_bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    }
+}
+
+/// Streaming root-subtree extraction: injects sentinel comment markers
+/// around the first match via `lol_html::send`, then slices the matched
+/// subtree out of the serialized output. Returns `None` if the selector
+/// did not match or the rewriter errored.
+async fn extract_root_subtree_async(
+    html: &[u8],
+    selector: &str,
+    chunk_size: usize,
+) -> Option<Vec<u8>> {
+    use lol_html::{element, html_content::ContentType};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    const OPEN: &str = "<!--__SPIDER_SEL_ROOT_OPEN__-->";
+    const CLOSE: &str = "<!--__SPIDER_SEL_ROOT_CLOSE__-->";
+
+    let collected: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::with_capacity(html.len())));
+    let sink = collected.clone();
+    let matched = Arc::new(AtomicBool::new(false));
+    let matched_el = matched.clone();
+
+    let element_content_handlers = vec![element!(selector, move |el| {
+        if !matched_el.swap(true, Ordering::SeqCst) {
+            el.before(OPEN, ContentType::Html);
+            if let Some(handlers) = el.end_tag_handlers() {
+                let h: lol_html::send::EndTagHandler<'static> = Box::new(|end| {
+                    end.after(CLOSE, ContentType::Html);
+                    Ok(())
+                });
+                handlers.push(h);
+            }
+        }
+        Ok(())
+    })];
+
+    let settings = lol_html::send::RewriteStrSettings {
+        element_content_handlers,
+        ..lol_html::send::RewriteStrSettings::new_send()
+    };
+
+    {
+        let mut rewriter = lol_html::send::HtmlRewriter::new(settings.into(), move |c: &[u8]| {
+            if let Ok(mut g) = sink.lock() {
+                g.extend_from_slice(c);
+            }
+        });
+
+        let mut wrote_error = false;
+        for chunk in html.chunks(chunk_size) {
+            if rewriter.write(chunk).is_err() {
+                wrote_error = true;
+                break;
+            }
+            spider::tokio::task::yield_now().await;
+        }
+        if wrote_error {
+            return None;
+        }
+        if rewriter.end().is_err() {
+            return None;
+        }
+    }
+
+    if !matched.load(Ordering::SeqCst) {
+        return None;
+    }
+
+    let buf = Arc::try_unwrap(collected).ok()?.into_inner().ok()?;
+    let bytes = buf.as_slice();
+    let open_at = find_subseq(bytes, OPEN.as_bytes())?;
+    let after_open = open_at + OPEN.len();
+    let close_at = find_subseq(&bytes[after_open..], CLOSE.as_bytes())? + after_open;
+    if after_open > close_at {
+        return None;
+    }
+    Some(bytes[after_open..close_at].to_vec())
+}
+
+/// Streaming exclude-selector removal via `lol_html::send`. Returns
+/// `None` if the rewriter errored.
+async fn remove_excludes_async(
+    html: &[u8],
+    selector: &str,
+    chunk_size: usize,
+) -> Option<Vec<u8>> {
+    use lol_html::element;
+    use std::sync::{Arc, Mutex};
+
+    let collected: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::with_capacity(html.len())));
+    let sink = collected.clone();
+
+    let element_content_handlers = vec![element!(selector, |el| {
+        el.remove();
+        Ok(())
+    })];
+
+    let settings = lol_html::send::RewriteStrSettings {
+        element_content_handlers,
+        ..lol_html::send::RewriteStrSettings::new_send()
+    };
+
+    {
+        let mut rewriter = lol_html::send::HtmlRewriter::new(settings.into(), move |c: &[u8]| {
+            if let Ok(mut g) = sink.lock() {
+                g.extend_from_slice(c);
+            }
+        });
+
+        let mut wrote_error = false;
+        for chunk in html.chunks(chunk_size) {
+            if rewriter.write(chunk).is_err() {
+                wrote_error = true;
+                break;
+            }
+            spider::tokio::task::yield_now().await;
+        }
+        if wrote_error {
+            return None;
+        }
+        if rewriter.end().is_err() {
+            return None;
+        }
+    }
+
+    Arc::try_unwrap(collected).ok()?.into_inner().ok()
+}
+
+#[inline]
+fn find_subseq(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
 /// Transform format the content.
 pub fn transform_content(
     res: &Page,
@@ -648,7 +843,8 @@ pub async fn transform_content_send_from_url_and_bytes(
     use std::collections::HashSet;
 
     let base_html =
-        get_html_with_selector_bytes(input.content, input.encoding, input.selector_config);
+        get_html_with_selector_bytes_async(input.content, input.encoding, input.selector_config)
+            .await;
 
     // prevent transforming binary files or re-encoding it
     if is_binary_file(input.content) {
