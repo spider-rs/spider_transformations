@@ -32,7 +32,7 @@ fn main() {
 
 ### Document formats (feature: `document`)
 
-Convert Office documents directly to markdown with zero panics and zero locks:
+Convert Office documents directly to markdown:
 
 1. Excel (.xlsx)
 1. Word (.docx)
