@@ -3,7 +3,7 @@
 //! Opens the docx ZIP archive, reads `word/document.xml`, and parses it with
 //! an event-driven `quick-xml` reader. All paths return `Result` — no panics.
 
-use super::DocumentError;
+use super::{decode_unescape, DocumentError};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::io::Cursor;
@@ -114,8 +114,8 @@ pub(crate) fn to_markdown(bytes: &[u8]) -> Result<String, DocumentError> {
             }
 
             Ok(Event::Text(ref e)) if in_text => {
-                if let Ok(text) = e.unescape() {
-                    let text_str = text.as_ref();
+                if let Some(text) = decode_unescape(e) {
+                    let text_str = text.as_str();
                     if !text_str.is_empty() {
                         if in_table_cell {
                             // Table cell text

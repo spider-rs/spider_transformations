@@ -62,6 +62,14 @@ impl From<std::io::Error> for DocumentError {
     }
 }
 
+/// Decode + entity-unescape an XML text event, matching the prior
+/// `BytesText::unescape()` semantics removed in quick-xml 0.39.
+pub(super) fn decode_unescape(e: &quick_xml::events::BytesText<'_>) -> Option<String> {
+    let decoded = e.decode().ok()?;
+    let unescaped = quick_xml::escape::unescape(&decoded).ok()?;
+    Some(unescaped.into_owned())
+}
+
 /// ZIP local-file-header magic bytes.
 const ZIP_MAGIC: [u8; 4] = [0x50, 0x4B, 0x03, 0x04];
 

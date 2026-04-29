@@ -129,8 +129,8 @@ fn parse_slide<R: std::io::Read>(reader_source: R, out: &mut String) -> Result<(
             }
 
             Ok(Event::Text(ref e)) if in_text_element => {
-                if let Ok(text) = e.unescape() {
-                    let text_str = text.as_ref();
+                if let Some(text) = super::decode_unescape(e) {
+                    let text_str = text.as_str();
                     if !text_str.is_empty() {
                         if in_table_cell {
                             current_cell.push_str(text_str);
