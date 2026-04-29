@@ -598,6 +598,41 @@ mod tests {
         }
     }
 
+    /// Regression: streaming extract_text must not deadlock waiting on the
+    /// internal mpsc channel — if the rewriter short-circuits on error, the
+    /// senders need to drop before the recv loop. Wrap calls in a tight
+    /// timeout and span small/large/malformed/empty inputs.
+    #[tokio::test]
+    async fn extract_text_streaming_never_deadlocks() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let big =
+            "<div>".repeat(50_000) + &"hello world ".repeat(10_000) + &"</div>".repeat(50_000);
+        let cases: Vec<&str> = vec![
+            "",
+            "plain text",
+            "<p>hi</p>",
+            "<div><p>unclosed",
+            "</p></div>stray",
+            "<<<>>>",
+            "<script>bad</script><p>good</p>",
+            &big,
+        ];
+        for html in cases {
+            let res = timeout(
+                Duration::from_secs(10),
+                super::text_extract::extract_text_streaming(html, &None),
+            )
+            .await;
+            assert!(
+                res.is_ok(),
+                "extract_text_streaming hung on input len {}",
+                html.len()
+            );
+        }
+    }
+
     /// All ReturnFormat variants on empty content must not panic.
     #[test]
     fn no_panic_transform_all_formats_empty() {

@@ -176,25 +176,30 @@ pub async fn extract_text_streaming_with_size(
         ..lol_html::send::RewriteStrSettings::new_send()
     };
 
-    let mut rewriter = lol_html::send::HtmlRewriter::new(settings.into(), |_c: &[u8]| {});
+    {
+        let mut rewriter = lol_html::send::HtmlRewriter::new(settings.into(), |_c: &[u8]| {});
 
-    let html_bytes = html.as_bytes();
-    let chunks = html_bytes.chunks(chunk_size);
-    let mut wrote_error = false;
+        let html_bytes = html.as_bytes();
+        let chunks = html_bytes.chunks(chunk_size);
+        let mut wrote_error = false;
 
-    let mut stream = spider::tokio_stream::iter(chunks).map(Ok::<&[u8], ()>);
+        let mut stream = spider::tokio_stream::iter(chunks).map(Ok::<&[u8], ()>);
 
-    while let Some(chunk) = stream.next().await {
-        if let Ok(chunk) = chunk {
-            if let Err(_) = rewriter.write(chunk) {
-                wrote_error = true;
-                break;
+        while let Some(chunk) = stream.next().await {
+            if let Ok(chunk) = chunk {
+                if let Err(_) = rewriter.write(chunk) {
+                    wrote_error = true;
+                    break;
+                }
             }
         }
-    }
 
-    if !wrote_error {
-        let _ = rewriter.end();
+        if !wrote_error {
+            let _ = rewriter.end();
+        }
+        // rewriter (and the txx captured in its handlers) drops at end of scope,
+        // closing the channel so rxx.recv() below returns None instead of hanging
+        // when the write loop short-circuited on error.
     }
 
     let mut rewrited_bytes: String = String::new();
