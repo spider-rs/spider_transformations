@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.39.10"
+version = "2.39.11"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -15,10 +15,10 @@ edition = "2021"
 indexmap = { version = "2", optional = true }
 aho-corasick = "1"
 regex = "1"
-html5ever = "0.27"
+html5ever = "0.39"
 unicode-width = "0.2"
-markup5ever = "0.12"
-tendril = "0.4"
+markup5ever = "0.39"
+tendril = "0.5"
 llm_readability = "0"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

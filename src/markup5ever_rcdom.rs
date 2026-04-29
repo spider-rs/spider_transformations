@@ -231,10 +231,10 @@ pub struct RcDom {
     pub document: Handle,
 
     /// Errors that occurred during parsing.
-    pub errors: Vec<Cow<'static, str>>,
+    pub errors: RefCell<Vec<Cow<'static, str>>>,
 
     /// The document's quirks mode.
-    pub quirks_mode: QuirksMode,
+    pub quirks_mode: Cell<QuirksMode>,
 }
 
 impl TreeSink for RcDom {
@@ -245,15 +245,20 @@ impl TreeSink for RcDom {
 
     type Handle = Handle;
 
-    fn parse_error(&mut self, msg: Cow<'static, str>) {
-        self.errors.push(msg);
+    type ElemName<'a>
+        = ExpandedName<'a>
+    where
+        Self: 'a;
+
+    fn parse_error(&self, msg: Cow<'static, str>) {
+        self.errors.borrow_mut().push(msg);
     }
 
-    fn get_document(&mut self) -> Handle {
+    fn get_document(&self) -> Handle {
         self.document.clone()
     }
 
-    fn get_template_contents(&mut self, target: &Handle) -> Handle {
+    fn get_template_contents(&self, target: &Handle) -> Handle {
         if let NodeData::Element {
             ref template_contents,
             ..
@@ -268,27 +273,22 @@ impl TreeSink for RcDom {
         }
     }
 
-    fn set_quirks_mode(&mut self, mode: QuirksMode) {
-        self.quirks_mode = mode;
+    fn set_quirks_mode(&self, mode: QuirksMode) {
+        self.quirks_mode.set(mode);
     }
 
     fn same_node(&self, x: &Handle, y: &Handle) -> bool {
         Rc::ptr_eq(x, y)
     }
 
-    fn elem_name<'a>(&self, target: &'a Handle) -> ExpandedName<'a> {
-        return match target.data {
+    fn elem_name<'a>(&'a self, target: &'a Handle) -> ExpandedName<'a> {
+        match target.data {
             NodeData::Element { ref name, .. } => name.expanded(),
             _ => Q.expanded(),
-        };
+        }
     }
 
-    fn create_element(
-        &mut self,
-        name: QualName,
-        attrs: Vec<Attribute>,
-        flags: ElementFlags,
-    ) -> Handle {
+    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> Handle {
         Node::new(NodeData::Element {
             name,
             attrs: RefCell::new(attrs),
@@ -301,18 +301,18 @@ impl TreeSink for RcDom {
         })
     }
 
-    fn create_comment(&mut self, text: StrTendril) -> Handle {
+    fn create_comment(&self, text: StrTendril) -> Handle {
         Node::new(NodeData::Comment { contents: text })
     }
 
-    fn create_pi(&mut self, target: StrTendril, data: StrTendril) -> Handle {
+    fn create_pi(&self, target: StrTendril, data: StrTendril) -> Handle {
         Node::new(NodeData::ProcessingInstruction {
             target,
             contents: data,
         })
     }
 
-    fn append(&mut self, parent: &Handle, child: NodeOrText<Handle>) {
+    fn append(&self, parent: &Handle, child: NodeOrText<Handle>) {
         // Append to an existing Text node if we have one.
         if let NodeOrText::AppendText(text) = &child {
             if let Some(h) = parent.children.borrow().last() {
@@ -333,45 +333,42 @@ impl TreeSink for RcDom {
         );
     }
 
-    fn append_before_sibling(&mut self, sibling: &Handle, child: NodeOrText<Handle>) {
-        match get_parent_and_index(sibling) {
-            Some((parent, i)) => {
-                let child = match (child, i) {
-                    // No previous node.
-                    (NodeOrText::AppendText(text), 0) => Node::new(NodeData::Text {
-                        contents: RefCell::new(text),
-                    }),
+    fn append_before_sibling(&self, sibling: &Handle, child: NodeOrText<Handle>) {
+        if let Some((parent, i)) = get_parent_and_index(sibling) {
+            let child = match (child, i) {
+                // No previous node.
+                (NodeOrText::AppendText(text), 0) => Node::new(NodeData::Text {
+                    contents: RefCell::new(text),
+                }),
 
-                    // Look for a text node before the insertion point.
-                    (NodeOrText::AppendText(text), i) => {
-                        let children = parent.children.borrow();
-                        let prev = &children[i - 1];
-                        if append_to_existing_text(prev, &text) {
-                            return;
-                        }
-                        Node::new(NodeData::Text {
-                            contents: RefCell::new(text),
-                        })
+                // Look for a text node before the insertion point.
+                (NodeOrText::AppendText(text), i) => {
+                    let children = parent.children.borrow();
+                    let prev = &children[i - 1];
+                    if append_to_existing_text(prev, &text) {
+                        return;
                     }
+                    Node::new(NodeData::Text {
+                        contents: RefCell::new(text),
+                    })
+                }
 
-                    // The tree builder promises we won't have a text node after
-                    // the insertion point.
+                // The tree builder promises we won't have a text node after
+                // the insertion point.
 
-                    // Any other kind of node.
-                    (NodeOrText::AppendNode(node), _) => node,
-                };
+                // Any other kind of node.
+                (NodeOrText::AppendNode(node), _) => node,
+            };
 
-                remove_from_parent(&child);
+            remove_from_parent(&child);
 
-                child.parent.set(Some(Rc::downgrade(&parent)));
-                parent.children.borrow_mut().insert(i, child);
-            }
-            _ => (),
+            child.parent.set(Some(Rc::downgrade(&parent)));
+            parent.children.borrow_mut().insert(i, child);
         }
     }
 
     fn append_based_on_parent_node(
-        &mut self,
+        &self,
         element: &Self::Handle,
         prev_element: &Self::Handle,
         child: NodeOrText<Self::Handle>,
@@ -388,7 +385,7 @@ impl TreeSink for RcDom {
     }
 
     fn append_doctype_to_document(
-        &mut self,
+        &self,
         name: StrTendril,
         public_id: StrTendril,
         system_id: StrTendril,
@@ -403,27 +400,31 @@ impl TreeSink for RcDom {
         );
     }
 
-    fn add_attrs_if_missing(&mut self, target: &Handle, attrs_base: Vec<Attribute>) {
-        if let NodeData::Element { ref attrs, .. } = target.data {
-            let mut existing = attrs.borrow_mut();
+    fn add_attrs_if_missing(&self, target: &Handle, attrs: Vec<Attribute>) {
+        if let NodeData::Element {
+            attrs: ref existing_attrs,
+            ..
+        } = target.data
+        {
+            let mut existing = existing_attrs.borrow_mut();
             let existing_names = existing
                 .iter()
                 .map(|e| e.name.clone())
                 .collect::<HashSet<_>>();
 
             existing.extend(
-                attrs_base
+                attrs
                     .into_iter()
                     .filter(|attr| !existing_names.contains(&attr.name)),
             );
         };
     }
 
-    fn remove_from_parent(&mut self, target: &Handle) {
+    fn remove_from_parent(&self, target: &Handle) {
         remove_from_parent(target);
     }
 
-    fn reparent_children(&mut self, node: &Handle, new_parent: &Handle) {
+    fn reparent_children(&self, node: &Handle, new_parent: &Handle) {
         let mut children = node.children.borrow_mut();
         let mut new_children = new_parent.children.borrow_mut();
         for child in children.iter() {
@@ -452,8 +453,8 @@ impl Default for RcDom {
     fn default() -> RcDom {
         RcDom {
             document: Node::new(NodeData::Document),
-            errors: vec![],
-            quirks_mode: tree_builder::NoQuirks,
+            errors: Default::default(),
+            quirks_mode: Cell::new(tree_builder::NoQuirks),
         }
     }
 }

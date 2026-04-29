@@ -608,7 +608,8 @@ mod tests {
     #[tokio::test]
     async fn extract_text_streaming_matches_sync_reference_single_write() {
         let small = "<p>hello <b>world</b></p>".to_string();
-        let mixed = "<div><p>real</p><script>bad</script><style>.x{}</style><p>after</p></div>".to_string();
+        let mixed =
+            "<div><p>real</p><script>bad</script><style>.x{}</style><p>after</p></div>".to_string();
         let with_rcdata = "<title>page title</title><p>body text</p>".to_string();
         let nested = "<div><div><div><p>deep</p></div></div></div>".to_string();
         let unicode = "<p>こんにちは 世界 🌍</p><p>café résumé</p>".to_string();
@@ -619,16 +620,12 @@ mod tests {
         // holds for inputs that stay under that threshold. Larger inputs are
         // exercised by `extract_text_streaming_stable_across_large_chunk_sizes`
         // below as a streaming-vs-streaming invariant instead.
-        let inputs: Vec<String> = vec![
-            small,
-            mixed,
-            with_rcdata,
-            nested,
-            unicode,
-            entities,
-        ];
+        let inputs: Vec<String> = vec![small, mixed, with_rcdata, nested, unicode, entities];
         for input in &inputs {
-            assert!(input.len() < 1024, "parity input must stay under 1024-byte flush boundary");
+            assert!(
+                input.len() < 1024,
+                "parity input must stay under 1024-byte flush boundary"
+            );
         }
 
         for input in &inputs {
@@ -640,7 +637,8 @@ mod tests {
             let stream_out =
                 super::text_extract::extract_text_streaming_with_size(input, &None, cs).await;
             assert_eq!(
-                stream_out, sync_out,
+                stream_out,
+                sync_out,
                 "streaming(single-write) diverged from sync, input_len={}",
                 input.len()
             );
@@ -657,7 +655,10 @@ mod tests {
             (r#"<div class="popup">x</div>"#.to_string() + &"<p>kept</p>".repeat(50)),
         ];
         for input in &ignore_inputs {
-            assert!(input.len() < 1024, "parity ignore-input must stay under 1024-byte flush boundary");
+            assert!(
+                input.len() < 1024,
+                "parity ignore-input must stay under 1024-byte flush boundary"
+            );
         }
         for input in &ignore_inputs {
             let sync_out = super::text_extract::extract_text(input, &ignore);
@@ -665,7 +666,8 @@ mod tests {
             let stream_out =
                 super::text_extract::extract_text_streaming_with_size(input, &ignore, cs).await;
             assert_eq!(
-                stream_out, sync_out,
+                stream_out,
+                sync_out,
                 "streaming(ignore, single-write) diverged from sync, input_len={}",
                 input.len()
             );
@@ -686,14 +688,18 @@ mod tests {
             "<title>t</title>".to_string() + &"<p>body</p>".repeat(500),
         ];
         for input in &inputs {
-            let reference =
-                super::text_extract::extract_text_streaming_with_size(input, &None, input.len() + 1)
-                    .await;
+            let reference = super::text_extract::extract_text_streaming_with_size(
+                input,
+                &None,
+                input.len() + 1,
+            )
+            .await;
             for cs in [4096usize, 8192, 65_536] {
                 let out =
                     super::text_extract::extract_text_streaming_with_size(input, &None, cs).await;
                 assert_eq!(
-                    out, reference,
+                    out,
+                    reference,
                     "streaming output drifted at chunk_size={cs}, input_len={}",
                     input.len()
                 );
