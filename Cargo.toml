@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.39.8"
+version = "2.39.9"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -12,7 +12,7 @@ license = "MIT"
 edition = "2021"
 
 [dependencies]
-indexmap = { version = "1", optional = true }
+indexmap = { version = "2", optional = true }
 aho-corasick = "1"
 regex = "1"
 html5ever = "0.27"
@@ -20,11 +20,11 @@ unicode-width = "0.2"
 markup5ever = "0.12"
 tendril = "0.4"
 llm_readability = "0"
-thiserror = "1"
+thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 fast_html2md = { version = "0", features = ["stream", "rewriter"] }
-phf = "0.11"
-phf_codegen = "0.11"
+phf = "0.13"
+phf_codegen = "0.13"
 lol_html = { version = "2" }
 spider_scraper = "0.1"
 base64 =  { version = "0.22", optional = true }
@@ -42,7 +42,7 @@ default-features = false
 
 
 [dev-dependencies]
-maud = "0.26"
+maud = "0.27"
 
 [features]
 default = ["serde"]
