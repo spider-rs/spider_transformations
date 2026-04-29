@@ -598,6 +598,112 @@ mod tests {
         }
     }
 
+    /// Parity: when the chunk size is at least as large as the input,
+    /// streaming feeds the rewriter in a single write — that is the same
+    /// success-path that the deadlock fix now scopes. Output must be
+    /// byte-identical to the sync `extract_text` reference. This pins the
+    /// success-path behavior so the scoping change (rewriter dropping at
+    /// scope end vs function end) cannot silently regress output for any
+    /// shape of input.
+    #[tokio::test]
+    async fn extract_text_streaming_matches_sync_reference_single_write() {
+        let small = "<p>hello <b>world</b></p>".to_string();
+        let mixed = "<div><p>real</p><script>bad</script><style>.x{}</style><p>after</p></div>".to_string();
+        let with_rcdata = "<title>page title</title><p>body text</p>".to_string();
+        let nested = "<div><div><div><p>deep</p></div></div></div>".to_string();
+        let unicode = "<p>こんにちは 世界 🌍</p><p>café résumé</p>".to_string();
+        let entities = "<p>a &amp; b &lt;c&gt; &quot;d&quot;</p>".to_string();
+        // Note: streaming has a documented 1024-byte buffer flush
+        // (text_extract.rs `if extracted_text.len() > 1024 { ... clear() }`)
+        // that the sync path doesn't, so direct sync==streaming parity only
+        // holds for inputs that stay under that threshold. Larger inputs are
+        // exercised by `extract_text_streaming_stable_across_large_chunk_sizes`
+        // below as a streaming-vs-streaming invariant instead.
+        let inputs: Vec<String> = vec![
+            small,
+            mixed,
+            with_rcdata,
+            nested,
+            unicode,
+            entities,
+        ];
+        for input in &inputs {
+            assert!(input.len() < 1024, "parity input must stay under 1024-byte flush boundary");
+        }
+
+        for input in &inputs {
+            let sync_out = super::text_extract::extract_text(input, &None);
+            // Force single-write: chunk_size >= input.len() means lol_html
+            // sees one contiguous buffer and emits text!() callbacks once
+            // per text node, identical to the sync rewrite.
+            let cs = input.len() + 1;
+            let stream_out =
+                super::text_extract::extract_text_streaming_with_size(input, &None, cs).await;
+            assert_eq!(
+                stream_out, sync_out,
+                "streaming(single-write) diverged from sync, input_len={}",
+                input.len()
+            );
+        }
+
+        // Custom-ignore parity (depth-counter + end-tag-handler path).
+        let mut ignore = std::collections::HashSet::new();
+        ignore.insert(".popup".to_string());
+        let ignore = Some(ignore);
+        let ignore_inputs = [
+            r#"<div><div class="popup">hide</div><p>show</p></div>"#.to_string(),
+            r#"<p>before</p><div class="popup"><p>nested hide</p></div><p>after</p>"#.to_string(),
+            // stay under the 1024-byte streaming flush boundary
+            (r#"<div class="popup">x</div>"#.to_string() + &"<p>kept</p>".repeat(50)),
+        ];
+        for input in &ignore_inputs {
+            assert!(input.len() < 1024, "parity ignore-input must stay under 1024-byte flush boundary");
+        }
+        for input in &ignore_inputs {
+            let sync_out = super::text_extract::extract_text(input, &ignore);
+            let cs = input.len() + 1;
+            let stream_out =
+                super::text_extract::extract_text_streaming_with_size(input, &ignore, cs).await;
+            assert_eq!(
+                stream_out, sync_out,
+                "streaming(ignore, single-write) diverged from sync, input_len={}",
+                input.len()
+            );
+        }
+    }
+
+    /// Stability: streaming output must be invariant across chunk sizes that
+    /// are coarse enough to never split a single text node. We verify this
+    /// for inputs where every text node fits in 64 bytes by comparing
+    /// chunk_size=4096 / 8192 / 65536 — all should produce the same string
+    /// as the single-write reference. This locks the public-API behavior
+    /// (default chunk_size=8192) against the deadlock-fix diff.
+    #[tokio::test]
+    async fn extract_text_streaming_stable_across_large_chunk_sizes() {
+        let inputs: Vec<String> = vec![
+            "<p>alpha</p><p>beta</p><p>gamma</p>".to_string(),
+            (0..200).map(|i| format!("<p>n{i}</p>")).collect::<String>(),
+            "<title>t</title>".to_string() + &"<p>body</p>".repeat(500),
+        ];
+        for input in &inputs {
+            let reference =
+                super::text_extract::extract_text_streaming_with_size(input, &None, input.len() + 1)
+                    .await;
+            for cs in [4096usize, 8192, 65_536] {
+                let out =
+                    super::text_extract::extract_text_streaming_with_size(input, &None, cs).await;
+                assert_eq!(
+                    out, reference,
+                    "streaming output drifted at chunk_size={cs}, input_len={}",
+                    input.len()
+                );
+            }
+            // Also pin the public API default path.
+            let public = super::text_extract::extract_text_streaming(input, &None).await;
+            assert_eq!(public, reference, "extract_text_streaming default diverged");
+        }
+    }
+
     /// Regression: streaming extract_text must not deadlock waiting on the
     /// internal mpsc channel — if the rewriter short-circuits on error, the
     /// senders need to drop before the recv loop. Wrap calls in a tight
