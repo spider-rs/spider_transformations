@@ -877,12 +877,15 @@ pub async fn transform_content_send_from_url_and_bytes(
         }
     };
 
-    // process readability
+    // process readability — async variant runs the parser on the current
+    // task and yields cooperatively between chunks for large bodies. The
+    // returned future is Send (via spider-html5ever / spider-tendril +
+    // unsafe Send/Sync on llm_readability's Node), so this is safe inside
+    // a multi-threaded tokio runtime.
     let base_html = if c.readability {
-        match llm_readability::extractor::extract(
-            &mut base_html.as_bytes(),
-            input.url.unwrap_or(&EXAMPLE_URL),
-        ) {
+        let url = input.url.unwrap_or(&EXAMPLE_URL).clone();
+        let bytes = base_html.as_bytes().to_vec();
+        match llm_readability::extractor::extract_async(bytes, url).await {
             Ok(product) => product.content,
             Err(_) => base_html,
         }

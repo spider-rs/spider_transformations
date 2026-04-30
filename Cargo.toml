@@ -1,6 +1,6 @@
 [package]
 name = "spider_transformations"
-version = "2.39.12"
+version = "2.39.13"
 authors = ["j-mendez <jeff@spider.cloud>"]
 readme = "README.md"
 description = "Transformation utils to use for spider"
@@ -19,7 +19,7 @@ html5ever = "0.39"
 unicode-width = "0.2"
 markup5ever = "0.39"
 tendril = "0.5"
-llm_readability = "0"
+llm_readability = { version = "0.0.17", features = ["tokio"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 fast_html2md = { version = "0", features = ["stream", "rewriter"] }
