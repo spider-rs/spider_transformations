@@ -935,4 +935,95 @@ mod tests {
             let _ = content::transform_content(&page, &conf, &None, &None, &None);
         }
     }
+
+    /// The envelope the built-in readability extractor produces for `template()`.
+    const BUILTIN_READABILITY_ENVELOPE: &str = "<html class=\"paper\"><head>\n<meta name=\"disabled-adaptations\" content=\"watch\">\n<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n<meta name=\"viewport\" content=\"initial-scale=1\">\n<base href=\"https://spider.cloud/\">\n<title>Transform Test</title>\n<script>window.isReaderPage = true;</script>\n</head><body>\n<h1>Fun is fun</h1><a href=\"https://spider.cloud\">Spider Cloud</a><pre>The content is ready</pre></body></html>";
+
+    fn hooked_extractor(_html: &str, _url: &spider::url::Url) -> Option<String> {
+        Some("<p>hooked</p>".into())
+    }
+
+    fn declining_extractor(_html: &str, _url: &spider::url::Url) -> Option<String> {
+        None
+    }
+
+    fn readability_page() -> spider::page::Page {
+        let mut page_response = PageResponse::default();
+        page_response.content = Some(template().into_string().into());
+        build_with_parse("https://spider.cloud", page_response)
+    }
+
+    /// Run every readability call site: the page path, the sync input path
+    /// and the async input path.
+    async fn readability_outputs(conf: &content::TransformConfig) -> [String; 3] {
+        let page = readability_page();
+        let markup = template().into_string();
+        let url = spider::url::Url::parse("https://spider.cloud").expect("valid url");
+        let input = || content::TransformInput {
+            url: Some(&url),
+            content: markup.as_bytes(),
+            screenshot_bytes: None,
+            encoding: None,
+            selector_config: None,
+            ignore_tags: None,
+        };
+        [
+            content::transform_content(&page, conf, &None, &None, &None),
+            content::transform_content_input(input(), conf),
+            content::transform_content_send_from_url_and_bytes(input(), conf).await,
+        ]
+    }
+
+    #[tokio::test]
+    async fn readability_extractor_hook_output_is_served() {
+        for fmt in [ReturnFormat::Bytes, ReturnFormat::Raw] {
+            let mut conf = content::TransformConfig::default();
+            conf.readability = true;
+            conf.return_format = fmt;
+            conf.readability_extractor = Some(hooked_extractor);
+
+            for out in readability_outputs(&conf).await {
+                assert_eq!(out, "<p>hooked</p>", "{:?}", fmt);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn readability_extractor_hook_none_runs_builtin() {
+        for fmt in [ReturnFormat::Bytes, ReturnFormat::Raw] {
+            let mut conf = content::TransformConfig::default();
+            conf.readability = true;
+            conf.return_format = fmt;
+
+            let without_hook = readability_outputs(&conf).await;
+            conf.readability_extractor = Some(declining_extractor);
+            let declined = readability_outputs(&conf).await;
+
+            assert_eq!(declined, without_hook, "{:?}", fmt);
+            for out in declined {
+                assert_eq!(out, BUILTIN_READABILITY_ENVELOPE, "{:?}", fmt);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn readability_extractor_hook_ignored_without_readability() {
+        for fmt in [
+            ReturnFormat::Bytes,
+            ReturnFormat::Raw,
+            ReturnFormat::Markdown,
+        ] {
+            let mut conf = content::TransformConfig::default();
+            conf.return_format = fmt;
+
+            let without_hook = readability_outputs(&conf).await;
+            conf.readability_extractor = Some(hooked_extractor);
+            let with_hook = readability_outputs(&conf).await;
+
+            assert_eq!(with_hook, without_hook, "{:?}", fmt);
+            for out in with_hook {
+                assert!(!out.contains("hooked"), "{:?}", fmt);
+            }
+        }
+    }
 }

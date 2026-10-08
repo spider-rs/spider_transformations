@@ -96,6 +96,14 @@ impl<'de> Deserialize<'de> for ReturnFormat {
     }
 }
 
+/// A pluggable readability extractor.
+///
+/// Receives the HTML after selector and ignore-tag processing, plus the page URL
+/// (or a placeholder URL when none is known). Return `Some(html)` to use that
+/// output in place of the built-in extractor, or `None` to run the built-in one.
+/// The result still goes through `clean_html` and the requested return format.
+pub type ReadabilityExtractor = fn(&str, &Url) -> Option<String>;
+
 /// Transformation configuration adjustments.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TransformConfig {
@@ -111,6 +119,16 @@ pub struct TransformConfig {
     pub filter_svg: bool,
     /// Main content for the page. Exclude the nav, footer, and etc.
     pub main_content: bool,
+    /// Called instead of the built-in readability extractor when `readability` is set.
+    /// Return `None` to run the built-in one.
+    pub readability_extractor: Option<ReadabilityExtractor>,
+}
+
+/// Run the configured readability extractor, if any.
+#[inline]
+fn custom_readability(c: &TransformConfig, html: &str, url: &Url) -> Option<String> {
+    c.readability_extractor
+        .and_then(|extract| extract(html, url))
 }
 
 /// Select elements to show or hide using a CSS selector.
@@ -698,15 +716,16 @@ pub fn transform_content(
 
     // process readability
     let base_html = if c.readability {
-        match llm_readability::extractor::extract(
-            &mut base_html.as_bytes(),
-            match url_parsed {
-                Some(u) => u,
-                _ => &EXAMPLE_URL,
+        let url = match url_parsed {
+            Some(u) => u,
+            _ => &EXAMPLE_URL,
+        };
+        match custom_readability(c, &base_html, url) {
+            Some(out) => out,
+            None => match llm_readability::extractor::extract(&mut base_html.as_bytes(), url) {
+                Ok(product) => product.content,
+                _ => base_html,
             },
-        ) {
-            Ok(product) => product.content,
-            _ => base_html,
         }
     } else {
         base_html
@@ -883,11 +902,16 @@ pub async fn transform_content_send_from_url_and_bytes(
     // unsafe Send/Sync on llm_readability's Node), so this is safe inside
     // a multi-threaded tokio runtime.
     let base_html = if c.readability {
-        let url = input.url.unwrap_or(&EXAMPLE_URL).clone();
-        let bytes = base_html.as_bytes().to_vec();
-        match llm_readability::extractor::extract_async(bytes, url).await {
-            Ok(product) => product.content,
-            Err(_) => base_html,
+        let url = input.url.unwrap_or(&EXAMPLE_URL);
+        match custom_readability(c, &base_html, url) {
+            Some(out) => out,
+            None => {
+                let bytes = base_html.as_bytes().to_vec();
+                match llm_readability::extractor::extract_async(bytes, url.clone()).await {
+                    Ok(product) => product.content,
+                    Err(_) => base_html,
+                }
+            }
         }
     } else {
         base_html
@@ -1006,12 +1030,13 @@ pub fn transform_content_input(input: TransformInput<'_>, c: &TransformConfig) -
 
     // process readability
     let base_html = if c.readability {
-        match llm_readability::extractor::extract(
-            &mut base_html.as_bytes(),
-            input.url.unwrap_or(&EXAMPLE_URL),
-        ) {
-            Ok(product) => product.content,
-            Err(_) => base_html,
+        let url = input.url.unwrap_or(&EXAMPLE_URL);
+        match custom_readability(c, &base_html, url) {
+            Some(out) => out,
+            None => match llm_readability::extractor::extract(&mut base_html.as_bytes(), url) {
+                Ok(product) => product.content,
+                Err(_) => base_html,
+            },
         }
     } else {
         base_html
